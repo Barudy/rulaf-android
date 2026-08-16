@@ -1,14 +1,14 @@
 [versions]
-agp = "9.1.1"
-coreKtx = "1.10.1"
+agp = "8.2.2"
+coreKtx = "1.12.0"
 junit = "4.13.2"
 junitVersion = "1.1.5"
 espressoCore = "3.5.1"
-lifecycleRuntimeKtx = "2.6.1"
-activityCompose = "1.8.0"
-kotlin = "2.2.10"
-ksp = "2.2.10-2.0.2"
-composeBom = "2026.02.01"
+lifecycleRuntimeKtx = "2.7.0"
+activityCompose = "1.8.2"
+kotlin = "1.9.22"
+ksp = "1.9.22-1.0.17"
+composeBom = "2024.09.03"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -28,6 +28,6 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
-

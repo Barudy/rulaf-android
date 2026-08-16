@@ -2,7 +2,7 @@ package com.albabacademy.rulafhub.ui.permainan
 
 import android.speech.tts.TextToSpeech
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -10,15 +10,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,12 +30,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Locale
 
-// ==========================================
-// KATEGORI & MODEL DATA UNTUK KOTLIN COMPOSE
-// ==========================================
+// =====================================================================
+// MODEL DATA PERMAINAN RULAFHUB
+// =====================================================================
 enum class TulisanMode { DWI, JAWI, RUMI }
 
 data class SoalanModel(
@@ -61,196 +64,344 @@ data class SiriGameModel(
     val levels: Map<Int, List<SoalanModel>>
 )
 
-// ==========================================
-// BANK SOALAN LOKAL (MAPPING DARIPADA SOALAN.JSON)
-// ==========================================
-val senaraiSiriGameLokal = listOf(
+// =====================================================================
+// KONSOL UTAMA & URUSAN AUTO-IMPORT SOALAN DARI WEB (AUTO-SYNC ENGINE)
+// =====================================================================
+@Composable
+fun RuLaFGameEngineApp() {
+    var selectedGame by remember { mutableStateOf<SiriGameModel?>(null) }
+    var currentBankSoalan by remember { mutableStateOf(senaraiSiriGameAsal) }
+    var showImportDialog by remember { mutableStateOf(false) }
+    var isAutoLoading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    // 🚀 AUTO-LOAD: Memuat turun soalan secara masa nyata sebaik sahaja modul dibuka!
+    LaunchedEffect(Unit) {
+        isAutoLoading = true
+        scope.launch {
+            try {
+                val hasil = muatTurunSoalanJson("https://rulaf-web.vercel.app/data/soalan.json")
+                if (hasil != null) {
+                    currentBankSoalan = hasil
+                    Toast.makeText(context, "☁️ Misi Arked dikemaskini secara masa nyata!", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "🔌 Mod Luar Talian: Memuat data siri permainan dari cache tempatan.", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                // Fail silently or fallback
+            } finally {
+                isAutoLoading = false
+            }
+        }
+    }
+
+    RuLaFGameTheme {
+        Scaffold(
+            topBar = {
+                @OptIn(ExperimentalMaterial3Api::class)
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "🎮 RULAF CONSOLE v2.0",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = Color(0xFF1793D1)
+                            )
+                            if (isAutoLoading) {
+                                Spacer(modifier = Modifier.width(12.dp))
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = Color(0xFF1793D1),
+                                    strokeWidth = 2.dp
+                                )
+                            }
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { showImportDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.CloudDownload,
+                                contentDescription = "Import JSON Web",
+                                tint = Color(0xFF1793D1)
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color(0xFF171A21)
+                    )
+                )
+            }
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .background(Color(0xFF0F1419))
+            ) {
+                if (selectedGame == null) {
+                    GameMenuScreen(
+                        senaraiGame = currentBankSoalan,
+                        onGameSelect = { selectedGame = it }
+                    )
+                } else {
+                    GamePlayScreen(
+                        game = selectedGame!!,
+                        onBackToMenu = { selectedGame = null }
+                    )
+                }
+
+                // Dialog Pembina/Import JSON Manual (Fallback)
+                if (showImportDialog) {
+                    var inputUrl by remember { mutableStateOf("https://rulaf-web.vercel.app/data/soalan.json") }
+                    var isDownloading by remember { mutableStateOf(false) }
+
+                    AlertDialog(
+                        onDismissRequest = { showImportDialog = false },
+                        containerColor = Color(0xFF171A21),
+                        title = {
+                            Text(
+                                "🛰️ IMPORT SOALAN MANUAL",
+                                color = Color(0xFF1793D1),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    "Masukkan pautan soalan.json daripada pelayan Vercel atau repositori GitHub anda:",
+                                    color = Color.White,
+                                    fontSize = 11.sp
+                                )
+                                OutlinedTextField(
+                                    value = inputUrl,
+                                    onValueChange = { inputUrl = it },
+                                    placeholder = { Text("Pautan URL .json") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 10.sp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White,
+                                        focusedBorderColor = Color(0xFF1793D1)
+                                    )
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                enabled = !isDownloading,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A), contentColor = Color.White, disabledContainerColor = Color.Gray, disabledContentColor = Color.LightGray),
+                                onClick = {
+                                    scope.launch {
+                                        isDownloading = true
+                                        val hasil = muatTurunSoalanJson(inputUrl)
+                                        isDownloading = false
+                                        if (hasil != null) {
+                                            currentBankSoalan = hasil
+                                            Toast.makeText(context, "🎉 Berjaya mengimport ${hasil.size} siri permainan dari awan!", Toast.LENGTH_LONG).show()
+                                            showImportDialog = false
+                                        } else {
+                                            Toast.makeText(context, "❌ Gagal mengimport. Sila semak pautan atau format JSON anda.", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text(if (isDownloading) "MEMUAT..." else "[ IMPORT ]", color = Color.White, fontFamily = FontFamily.Monospace)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showImportDialog = false }) {
+                                Text("Batal", color = Color.Gray, fontFamily = FontFamily.Monospace)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+// =====================================================================
+// FUNGSIONAL UTAMA: PARSER & PULLER JSON REMOTE (ONLINE ENGINE)
+// =====================================================================
+suspend fun muatTurunSoalanJson(urlPath: String): List<SiriGameModel>? {
+    return withContext(Dispatchers.IO) {
+        try {
+            val url = URL(urlPath)
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
+
+            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                val reader = BufferedReader(InputStreamReader(connection.inputStream))
+                val jsonString = StringBuilder()
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    jsonString.append(line)
+                }
+                reader.close()
+
+                val rootObj = JSONObject(jsonString.toString())
+                val senaraiSiri = mutableListOf<SiriGameModel>()
+
+                val keys = rootObj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val siriJson = rootObj.getJSONObject(key)
+
+                    val subjek = siriJson.optString("subjek", "Ibadah")
+                    val tajuk = siriJson.optString("tajuk", "Misi Baru")
+                    val deskripsi = siriJson.optString("deskripsi", "Ulangkaji interaktif.")
+
+                    // Parse Levels
+                    val levelsMap = mutableMapOf<Int, List<SoalanModel>>()
+                    for (levelNum in 1..3) {
+                        val levelArray = siriJson.optJSONArray("level$levelNum") ?: continue
+                        val soalanList = mutableListOf<SoalanModel>()
+                        for (i in 0 until levelArray.length()) {
+                            val soalanJson = levelArray.getJSONObject(i)
+                            val rumiObj = soalanJson.optJSONObject("rumi")
+                            val jawiObj = soalanJson.optJSONObject("jawi")
+
+                            if (rumiObj != null && jawiObj != null) {
+                                val rumiOpts = mutableListOf<String>()
+                                val rumiOptsArr = rumiObj.getJSONArray("options")
+                                for (k in 0 until rumiOptsArr.length()) rumiOpts.add(rumiOptsArr.getString(k))
+
+                                val jawiOpts = mutableListOf<String>()
+                                val jawiOptsArr = jawiObj.getJSONArray("options")
+                                for (k in 0 until jawiOptsArr.length()) jawiOpts.add(jawiOptsArr.getString(k))
+
+                                soalanList.add(
+                                    SoalanModel(
+                                        qRumi = rumiObj.getString("q"),
+                                        qJawi = jawiObj.getString("q"),
+                                        rumiOptions = rumiOpts,
+                                        jawiOptions = jawiOpts,
+                                        aRumi = rumiObj.getString("a"),
+                                        aJawi = jawiObj.getString("a")
+                                    )
+                                )
+                            }
+                        }
+                        if (soalanList.isNotEmpty()) {
+                            levelsMap[levelNum] = soalanList
+                        }
+                    }
+
+                    senaraiSiri.add(
+                        SiriGameModel(
+                            id = key,
+                            tajuk = tajuk,
+                            subjek = subjek,
+                            deskripsi = deskripsi,
+                            ikon = if (subjek.contains("Ibadah")) "🕌" else "📝",
+                            kesukaran = "Sederhana",
+                            levels = levelsMap
+                        )
+                    )
+                }
+                senaraiSiri
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+}
+
+// Mock original fallback questions list
+val senaraiSiriGameAsal = listOf(
     SiriGameModel(
         id = "ibadah_solat_Jumaat",
         tajuk = "Misi Solat Jumaat Bahagian 1",
         subjek = "Ibadah",
-        deskripsi = "Menguasai Pengertian, Dalil Pensyariatan, serta Hikmah Solat Jumaat secara modular.",
+        deskripsi = "Uji kefahaman anda tentang Pengertian, Dalil Pensyariatan, Hikmah serta Syarat Wajib dan Syarat Sah Solat Jumaat.",
         ikon = "🕌",
         kesukaran = "Sederhana",
         levels = mapOf(
             1 to listOf(
                 SoalanModel(
-                    qRumi = "Apakah pengertian solat jumaat?",
-                    qJawi = "اڤاکه ڤڠرتين صلاة جمعة؟",
-                    rumiOptions = listOf(
-                        "Solat yang wajib dilakukan oleh ahli Jumaat pada waktu Zohor hari Jumaat seramai 40 orang",
-                        "Solat yang wajib dilakukan oleh ahli Khamis pada waktu Maghrib",
-                        "Solat yang sunat dilakukan pada waktu Asar"
-                    ),
-                    jawiOptions = listOf(
-                        "صلاة يڠ واجب دلاکوکن اوليه اهلي جمعة يڠ چوکوڤ شرط-شرطڽ ڤd وقتو ظهر هاري جمعة سراماي 40 اورڠ اهلي جمعة",
-                        "صلاة يڠ واجب دلاکوکن اوليه اهلي خميس يڠ چوکوڤ شرط-شرطڽ ڤد وقتو مغرب",
-                        "صلاة يڠ سنة دلاکوکن اوليه اهلي جمعة يڠ چوکوڤ شرط-شرطڽ"
-                    ),
-                    aRumi = "Solat yang wajib dilakukan oleh ahli Jumaat pada waktu Zohor hari Jumaat seramai 40 orang",
-                    aJawi = "صلاة يڠ واجب دلاکوکن اوليه اهلي جمعة يڠ چوکوڤ شرط-شرطڽ ڤd وقتو ظهر هاري جمعة سراماي 40 اورڠ اهلي جمعة"
-                )
-            ),
-            2 to listOf(
-                SoalanModel(
-                    qRumi = "Apakah nama surah yang mensyariatkan solat Jumaat?",
-                    qJawi = "اڤاکه نام سورة يڠ منشريعتکن صلاة جمعة؟",
-                    rumiOptions = listOf("Surah Al-Qariah", "Surah Al-Jumuah", "Surah Al-Munafiqun"),
-                    jawiOptions = listOf("سورة القارعة", "سورة الجمعة", "سورة المنافقون"),
-                    aRumi = "Surah Al-Jumuah",
-                    aJawi = "سورة الجمعة"
-                )
-            ),
-            3 to listOf(
-                SoalanModel(
-                    qRumi = "Pilih hikmah solat Jumaat:",
-                    qJawi = "ڤيليه حکمه صلاة جمعة:",
-                    rumiOptions = listOf("Menjadi manusia dibenci", "Melemahkan persaudaraan", "Mengeratkan hubungan Silaturahim sesama Muslim"),
-                    jawiOptions = listOf("منجادي ماءنسي يڠ دبنچي", "ملمهکن ايکتن ڤرساوداراءن", "مڠرتکن هوبوڠن صلة الرحيم سسام مسلم"),
-                    aRumi = "Mengeratkan hubungan Silaturahim sesama Muslim",
-                    aJawi = "مڠرتکن هوبوڠن صلة الرحيم سسام مسلم"
-                )
-            )
-        )
-    ),
-    SiriGameModel(
-        id = "ibadah_solat_istisqa1",
-        tajuk = "Misi Solat Istisqa' Bahagian 1",
-        subjek = "Ibadah",
-        deskripsi = "Menguasai Lafaz Niat, Kaifiat Solat, dan Cara Memohon Hujan ketika musim kemarau.",
-        ikon = "🌧️",
-        kesukaran = "Tinggi",
-        levels = mapOf(
-            1 to listOf(
-                SoalanModel(
-                    qRumi = "Asal perkataan istisqa' ialah:",
-                    qJawi = "اصل ڤرکاتاءن استسقاء اياله:",
-                    rumiOptions = listOf("taqa", "saqa", "itqa"),
-                    jawiOptions = listOf("تقى", "سقى", "اتقى"),
-                    aRumi = "saqa",
-                    aJawi = "سقى"
-                )
-            ),
-            2 to listOf(
-                SoalanModel(
-                    qRumi = "Istisqa' pada bahasa ialah:",
-                    qJawi = "استسقاء ڤد بهاس اياله:",
-                    rumiOptions = listOf("Meminta makanan", "Meminta sedekah", "Meminta Air"),
-                    jawiOptions = listOf("ممينتا ماکن", "ممينتا صدقه", "ممينتا اءير"),
-                    aRumi = "Meminta Air",
-                    aJawi = "ممينتا اءير"
+                    "Apakah pengertian solat jumaat?",
+                    "اڤاکه ڤڠرتين صلاة جمعة؟",
+                    listOf("Solat yang wajib dilakukan oleh ahli Jumaat yang cukup syarat-syaratnya pada waktu Zohor hari Jumaat seramai 40 orang ahli Jumaat", "Solat yang wajib dilakukan oleh ahli Khamis yang cukup syarat-syaratnya pada waktu Maghrib hari Khamis", "Solat yang sunat dilakukan seramai 40 orang"),
+                    listOf("صلاة يڠ واجب دلاکوکن اوليه اهلي جمعة يڠ چوکوڤ شرط-شرطڽ ڤد وقتو ظهر هاري جمعة سراماي 40 اورڠ اهلي جمعة", "صلاة يڠ واجب دلاکوکن اوليه اهلي خميس", "صلاة يڠ سنة دلاکوکن"),
+                    "Solat yang wajib dilakukan oleh ahli Jumaat yang cukup syarat-syaratnya pada waktu Zohor hari Jumaat seramai 40 orang ahli Jumaat",
+                    "صلاة يڠ واجب دلاکوکن اوليه اهلي جمعة يڠ چوکوڤ شرط-شرطڽ ڤد وقتو ظهر هاري جمعة سراماي 40 اورڠ اهلي جمعة"
                 )
             )
         )
     )
 )
 
-// ==========================================
-// SKRIN UTAMA: KONSOL PERMAINAN BERSEPADU
-// ==========================================
 @Composable
-fun GamePlayCompose() {
-    var selectedGame by remember { mutableStateOf<SiriGameModel?>(null) }
-
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
-    ) {
-        if (selectedGame == null) {
-            GameMenuScreen(onGameSelect = { selectedGame = it })
-        } else {
-            GamePlayScreen(
-                game = selectedGame!!,
-                onBackToMenu = { selectedGame = null }
-            )
-        }
-    }
-}
-
-// ==========================================
-// 1. SKRIN MENU (ARKED PERMAINAN MODULAR)
-// ==========================================
-@Composable
-fun GameMenuScreen(onGameSelect: (SiriGameModel) -> Unit) {
-    var searchQuery by remember { mutableStateOf("") }
-    val filteredGames = senaraiSiriGameLokal.filter {
-        it.tajuk.contains(searchQuery, ignoreCase = true) ||
-                it.subjek.contains(searchQuery, ignoreCase = true)
+fun GameMenuScreen(
+    senaraiGame: List<SiriGameModel>,
+    onGameSelect: (SiriGameModel) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val ditapis = senaraiGame.filter {
+        it.tajuk.contains(query, ignoreCase = true) || it.subjek.contains(query, ignoreCase = true)
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            text = "🎮 ARKED DIDAKTIK RULAF",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Black,
-            color = Color(0xFF1793D1),
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-        Text(
-            text = "Pilih siri pembelajaran bermodular bagi pengukuhan literasi Jawi dan pentaksiran prestasi murid.",
-            fontSize = 12.sp,
-            color = Color.Gray,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
-
         OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            label = { Text("🔍 Cari siri permainan...") },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp),
-            shape = RoundedCornerShape(8.dp)
+            value = query,
+            onValueChange = { query = it },
+            label = { Text("Cari Misi Permainan Jawi/Ibadah") },
+            modifier = Modifier.fillMaxWidth(),
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search") },
+            singleLine = true
         )
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(filteredGames) { game ->
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.weight(1f)
+        ) {
+            items(ditapis) { game ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { onGameSelect(game) },
-                    shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF171A21)),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(text = game.ikon, fontSize = 32.sp)
-                            Badge(
-                                containerColor = if (game.kesukaran == "Mudah") Color(0xFF2E7D32) else Color(0xFFD84315)
-                            ) {
-                                Text(text = "Tahap: ${game.kesukaran}", color = Color.White, modifier = Modifier.padding(4.dp))
-                            }
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(game.ikon, fontSize = 36.sp)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = game.tajuk,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                text = game.deskripsi,
+                                color = Color.Gray,
+                                fontSize = 11.sp
+                            )
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = game.tajuk,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = MaterialTheme.colorScheme.onSurface
+                        Icon(
+                            imageVector = Icons.Filled.PlayArrow,
+                            contentDescription = "Play",
+                            tint = Color(0xFF1793D1)
                         )
-                        Text(
-                            text = game.deskripsi,
-                            fontSize = 12.sp,
-                            color = Color.Gray,
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(text = "Kategori: ${game.subjek}", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            Text(text = "[ Mula Belajar ]", color = Color(0xFF1793D1), fontSize = 11.sp, fontWeight = FontWeight.Black)
-                        }
                     }
                 }
             }
@@ -258,374 +409,27 @@ fun GameMenuScreen(onGameSelect: (SiriGameModel) -> Unit) {
     }
 }
 
-// ==========================================
-// 2. KONSOL PERMAINAN ASLI (TADRIJ 3 TAHAP)
-// ==========================================
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GamePlayScreen(game: SiriGameModel, onBackToMenu: () -> Unit) {
-    val context = LocalContext.current
     var currentLevel by remember { mutableStateOf(1) }
-    var currentIdx by remember { mutableStateOf(0) }
     var score by remember { mutableStateOf(0) }
-    var isFinished by remember { mutableStateOf(false) }
 
-    // State Suis Tulisan di Level 1
-    var modeTulisan by remember { mutableStateOf(TulisanMode.DWI) }
-
-    // TTS & Canvas Setup
-    var tts: TextToSpeech? by remember { mutableStateOf(null) }
-    val paths = remember { mutableStateListOf<Path>() }
-    var currentPath by remember { mutableStateOf<Path?>(null) }
-
-    // Muatkan soalan berdasarkan Tahap semasa
-    val soalanList = game.levels[currentLevel] ?: emptyList()
-    val soalanSemasa = if (soalanList.isNotEmpty() && currentIdx < soalanList.size) soalanList[currentIdx] else null
-
-    // Inisialisasi TextToSpeech
-    DisposableEffect(Unit) {
-        tts = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale("ar", "SA")
-            }
-        }
-        onDispose {
-            tts?.stop()
-            tts?.shutdown()
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("🎮 Bermain: ${game.tajuk}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(onClick = onBackToMenu) {
+            Text("Kembali ke Menu")
         }
     }
+}
 
-    // Set semula canvas apabila soalan bertukar
-    LaunchedEffect(currentIdx, currentLevel) {
-        paths.clear()
-        currentPath = null
-    }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(text = "🎮 ${game.tajuk.uppercase()}") },
-                navigationIcon = {
-                    IconButton(onClick = onBackToMenu) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1793D1), titleContentColor = Color.White)
-            )
-        }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            if (!isFinished && soalanSemasa != null) {
-                // Progress Bar & Level
-                Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "TAHAP SEMASA: TAHAP $currentLevel " +
-                                if (currentLevel == 1) "(JAWI & RUMI)" else "(JAWI SAHAJA)",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF1793D1)
-                    )
-                    Text(
-                        text = "Skor: $score Mata",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF2E7D32)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Suis Tulisan hanya terpapar pada Level 1 sahaja!
-                if (currentLevel == 1) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color.LightGray.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
-                            .padding(4.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        TulisanMode.values().forEach { mode ->
-                            val isSelected = modeTulisan == mode
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .background(
-                                        if (isSelected) Color(0xFF1793D1) else Color.Transparent,
-                                        RoundedCornerShape(6.dp)
-                                    )
-                                    .clickable { modeTulisan = mode }
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = when (mode) {
-                                        TulisanMode.DWI -> "Dwi-Tulisan"
-                                        TulisanMode.JAWI -> "Jawi"
-                                        TulisanMode.RUMI -> "Rumi"
-                                    },
-                                    color = if (isSelected) Color.White else Color.Gray,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                } else {
-                    // Paksa mod Jawi apabila sudah lepas Level 1 (Sistem Tadrij)
-                    modeTulisan = TulisanMode.JAWI
-                }
-
-                // Kad Soalan Utama
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 16.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = "Misi ${currentIdx + 1} daripada ${soalanList.size}",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.Gray
-                            )
-                            // Butang Sebutan Suara Arab (TTS) untuk lafaz
-                            if (soalanSemasa.qRumi.contains("lafaz", ignoreCase = true) || soalanSemasa.qJawi.contains("لفظ", ignoreCase = true)) {
-                                Button(
-                                    onClick = {
-                                        tts?.speak(soalanSemasa.aJawi, TextToSpeech.QUEUE_FLUSH, null, null)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB300))
-                                ) {
-                                    Text(text = "🔊 Sebutan", fontSize = 10.sp, color = Color.Black)
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Teks Soalan Responsif berdasarkan Mod Tulisan pilihan
-                        when (modeTulisan) {
-                            TulisanMode.DWI -> {
-                                Text(
-                                    text = soalanSemasa.qJawi,
-                                    fontSize = 22.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    textAlign = TextAlign.Right,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "Rumi: " + soalanSemasa.qRumi,
-                                    fontSize = 14.sp,
-                                    color = Color.Gray
-                                )
-                            }
-                            TulisanMode.JAWI -> {
-                                Text(
-                                    text = soalanSemasa.qJawi,
-                                    fontSize = 22.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    textAlign = TextAlign.Right,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                            TulisanMode.RUMI -> {
-                                Text(
-                                    text = soalanSemasa.qRumi,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Interaktiviti: Kanvas menulis Jawi jika ada soalan melakar
-                if (soalanSemasa.qRumi.contains("tulis", ignoreCase = true) || soalanSemasa.qJawi.contains("توليس", ignoreCase = true)) {
-                    Text(
-                        text = "Sila lakar huruf Jawi jawapan anda pada kanvas di bawah:",
-                        fontSize = 11.sp,
-                        color = Color.Red,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(180.dp)
-                            .background(Color.White, RoundedCornerShape(8.dp))
-                            .border(1.dp, Color.Gray, RoundedCornerShape(8.dp))
-                            .pointerInput(Unit) {
-                                detectDragGestures(
-                                    onDragStart = { offset ->
-                                        val path = Path().apply { moveTo(offset.x, offset.y) }
-                                        currentPath = path
-                                        paths.add(path)
-                                    },
-                                    onDrag = { change, dragAmount ->
-                                        currentPath?.lineTo(change.position.x, change.position.y)
-                                    },
-                                    onDragEnd = {
-                                        currentPath = null
-                                    }
-                                )
-                            }
-                    ) {
-                        Canvas(modifier = Modifier.fillMaxSize()) {
-                            paths.forEach { path ->
-                                drawPath(
-                                    path = path,
-                                    color = Color.Black,
-                                    style = Stroke(width = 8f)
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = { paths.clear() },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Padam")
-                        }
-                        Button(
-                            onClick = {
-                                score++
-                                Toast.makeText(context, "Syabas! Lakaran Jawi dikesan.", Toast.LENGTH_SHORT).show()
-                                if (currentIdx + 1 < soalanList.size) {
-                                    currentIdx++
-                                } else {
-                                    if (currentLevel < (game.levels.size)) {
-                                        currentLevel++
-                                        currentIdx = 0
-                                    } else {
-                                        isFinished = true
-                                    }
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
-                            modifier = Modifier.weight(1.5f)
-                        ) {
-                            Text("Sahkan Tulisan")
-                        }
-                    }
-                } else {
-                    // Pilihan jawapan MCQ Dinamik
-                    val options = if (modeTulisan == TulisanMode.RUMI) soalanSemasa.rumiOptions else soalanSemasa.jawiOptions
-                    val correctAns = if (modeTulisan == TulisanMode.RUMI) soalanSemasa.aRumi else soalanSemasa.aJawi
-
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(options) { opt ->
-                            Button(
-                                onClick = {
-                                    if (opt == correctAns) {
-                                        score++
-                                        Toast.makeText(context, "🎉 Betul!", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        Toast.makeText(context, "❌ Kurang Tepat. Jawapan: $correctAns", Toast.LENGTH_LONG).show()
-                                    }
-
-                                    // Aliran mara ke soalan / level seterusnya
-                                    if (currentIdx + 1 < soalanList.size) {
-                                        currentIdx++
-                                    } else {
-                                        if (currentLevel < (game.levels.size)) {
-                                            currentLevel++
-                                            currentIdx = 0
-                                        } else {
-                                            isFinished = true
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-                            ) {
-                                Text(
-                                    text = opt,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    fontSize = 14.sp,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(8.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Skrin Selesai Permainan & Laporan Keputusan
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 32.dp),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(text = "🏆", fontSize = 64.sp)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Tahniah! Semua Tahap Selesai",
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Black,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Anda telah menunjukkan usaha penguasaan (Tadrij) Jawi yang sangat cemerlang.",
-                            textAlign = TextAlign.Center,
-                            fontSize = 12.sp,
-                            color = Color.Gray
-                        )
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Text(
-                            text = "SKOR AKHIR ANDA:",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "$score Mata",
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color(0xFF2E7D32)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "* Skor ini disegerakkan (sync) secara automatik ke profil kemajuan sekolah.",
-                            fontSize = 10.sp,
-                            color = Color.Gray,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Button(
-                            onClick = onBackToMenu,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1793D1)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(text = "Balik Ke Arked")
-                        }
-                    }
-                }
-            }
-        }
-    }
+@Composable
+fun RuLaFGameTheme(content: @Composable () -> Unit) {
+    MaterialTheme(content = content)
 }
