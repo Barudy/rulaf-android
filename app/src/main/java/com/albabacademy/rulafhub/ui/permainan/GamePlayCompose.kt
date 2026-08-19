@@ -81,7 +81,7 @@ fun RuLaFGameEngineApp() {
         isAutoLoading = true
         scope.launch {
             try {
-                val hasil = muatTurunSoalanJson("https://rulaf-web.vercel.app/data/soalan.json")
+                val hasil = muatTurunSoalanJson("https://raw.githubusercontent.com/Barudy/rulaf-web/main/app/data/soalan.json")
                 if (hasil != null) {
                     currentBankSoalan = hasil
                     Toast.makeText(context, "☁️ Misi Arked dikemaskini secara masa nyata!", Toast.LENGTH_SHORT).show()
@@ -155,7 +155,7 @@ fun RuLaFGameEngineApp() {
 
                 // Dialog Pembina/Import JSON Manual (Fallback)
                 if (showImportDialog) {
-                    var inputUrl by remember { mutableStateOf("https://rulaf-web.vercel.app/data/soalan.json") }
+                    var inputUrl by remember { mutableStateOf("https://raw.githubusercontent.com/Barudy/rulaf-web/main/app/data/soalan.json") }
                     var isDownloading by remember { mutableStateOf(false) }
 
                     AlertDialog(
