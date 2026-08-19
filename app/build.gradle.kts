@@ -80,6 +80,9 @@ dependencies {
     implementation("androidx.compose.material3:material3:1.1.2")
     implementation("androidx.navigation:navigation-compose:2.7.6")
 
+    // 🖼️ IMAGE LOADING
+    implementation(libs.coil.compose)
+
     // 🔒 2. BIOMETRIC AUTHENTICATION
     implementation("androidx.biometric:biometric:1.1.0")
 
