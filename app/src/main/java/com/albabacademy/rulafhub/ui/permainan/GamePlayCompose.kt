@@ -1,17 +1,17 @@
 package com.albabacademy.rulafhub.ui.permainan
 
+import androidx.compose.material3.ExperimentalMaterial3Api
+import android.content.Intent
+import android.net.Uri
 import android.speech.tts.TextToSpeech
 import android.widget.Toast
 import androidx.compose.animation.*
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -19,11 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -67,11 +63,11 @@ data class SiriGameModel(
 // =====================================================================
 // KONSOL UTAMA & URUSAN AUTO-IMPORT SOALAN DARI WEB (AUTO-SYNC ENGINE)
 // =====================================================================
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RuLaFGameEngineApp() {
+fun RuLaFGameEngineApp(isDarkMode: Boolean = true, onExit: () -> Unit = {}) {
     var selectedGame by remember { mutableStateOf<SiriGameModel?>(null) }
     var currentBankSoalan by remember { mutableStateOf(senaraiSiriGameAsal) }
-    var showImportDialog by remember { mutableStateOf(false) }
     var isAutoLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -89,57 +85,48 @@ fun RuLaFGameEngineApp() {
                     Toast.makeText(context, "🔌 Mod Luar Talian: Memuat data siri permainan dari cache tempatan.", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                // Fail silently or fallback
+                // Fallback silently
             } finally {
                 isAutoLoading = false
             }
         }
     }
 
-    RuLaFGameTheme {
-        Scaffold(
-            topBar = {
-                @OptIn(ExperimentalMaterial3Api::class)
-                TopAppBar(
-                    title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "🎮 RULAF CONSOLE v2.0",
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = Color(0xFF1793D1)
-                            )
-                            if (isAutoLoading) {
-                                Spacer(modifier = Modifier.width(12.dp))
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    color = Color(0xFF1793D1),
-                                    strokeWidth = 2.dp
-                                )
-                            }
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = { showImportDialog = true }) {
-                            Icon(
-                                imageVector = Icons.Default.CloudDownload,
-                                contentDescription = "Import JSON Web",
-                                tint = Color(0xFF1793D1)
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background // Fully integrated Dark/Light mode!
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Clean Top Bar without manual download cloud icon
+            SmallTopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "🎮 RULAF CONSOLE v2.0",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (isAutoLoading) {
+                            Spacer(modifier = Modifier.width(12.dp))
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                strokeWidth = 2.dp
                             )
                         }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color(0xFF171A21)
-                    )
+                    }
+                },
+                colors = TopAppBarDefaults.smallTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
-            }
-        ) { padding ->
+            )
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
-                    .background(Color(0xFF0F1419))
+                    .padding(16.dp)
             ) {
                 if (selectedGame == null) {
                     GameMenuScreen(
@@ -150,74 +137,6 @@ fun RuLaFGameEngineApp() {
                     GamePlayScreen(
                         game = selectedGame!!,
                         onBackToMenu = { selectedGame = null }
-                    )
-                }
-
-                // Dialog Pembina/Import JSON Manual (Fallback)
-                if (showImportDialog) {
-                    var inputUrl by remember { mutableStateOf("https://raw.githubusercontent.com/Barudy/rulaf-web/main/app/data/soalan.json") }
-                    var isDownloading by remember { mutableStateOf(false) }
-
-                    AlertDialog(
-                        onDismissRequest = { showImportDialog = false },
-                        containerColor = Color(0xFF171A21),
-                        title = {
-                            Text(
-                                "🛰️ IMPORT SOALAN MANUAL",
-                                color = Color(0xFF1793D1),
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        },
-                        text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(
-                                    "Masukkan pautan soalan.json daripada pelayan Vercel atau repositori GitHub anda:",
-                                    color = Color.White,
-                                    fontSize = 11.sp
-                                )
-                                OutlinedTextField(
-                                    value = inputUrl,
-                                    onValueChange = { inputUrl = it },
-                                    placeholder = { Text("Pautan URL .json") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 10.sp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedTextColor = Color.White,
-                                        unfocusedTextColor = Color.White,
-                                        focusedBorderColor = Color(0xFF1793D1)
-                                    )
-                                )
-                            }
-                        },
-                        confirmButton = {
-                            Button(
-                                enabled = !isDownloading,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A), contentColor = Color.White, disabledContainerColor = Color.Gray, disabledContentColor = Color.LightGray),
-                                onClick = {
-                                    scope.launch {
-                                        isDownloading = true
-                                        val hasil = muatTurunSoalanJson(inputUrl)
-                                        isDownloading = false
-                                        if (hasil != null) {
-                                            currentBankSoalan = hasil
-                                            Toast.makeText(context, "🎉 Berjaya mengimport ${hasil.size} siri permainan dari awan!", Toast.LENGTH_LONG).show()
-                                            showImportDialog = false
-                                        } else {
-                                            Toast.makeText(context, "❌ Gagal mengimport. Sila semak pautan atau format JSON anda.", Toast.LENGTH_LONG).show()
-                                        }
-                                    }
-                                }
-                            ) {
-                                Text(if (isDownloading) "MEMUAT..." else "[ IMPORT ]", color = Color.White, fontFamily = FontFamily.Monospace)
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showImportDialog = false }) {
-                                Text("Batal", color = Color.Gray, fontFamily = FontFamily.Monospace)
-                            }
-                        }
                     )
                 }
             }
@@ -352,9 +271,7 @@ fun GameMenuScreen(
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         OutlinedTextField(
@@ -375,7 +292,7 @@ fun GameMenuScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { onGameSelect(game) },
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF171A21)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Row(
@@ -387,7 +304,7 @@ fun GameMenuScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = game.tajuk,
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )
@@ -400,7 +317,7 @@ fun GameMenuScreen(
                         Icon(
                             imageVector = Icons.Filled.PlayArrow,
                             contentDescription = "Play",
-                            tint = Color(0xFF1793D1)
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -409,22 +326,218 @@ fun GameMenuScreen(
     }
 }
 
+// =====================================================================
+// 🎮 REAL INTERACTIVE GAMEPLAY SCREEN (BEBAS PEPIJAT TERKELUAR!)
+// =====================================================================
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GamePlayScreen(game: SiriGameModel, onBackToMenu: () -> Unit) {
-    var currentLevel by remember { mutableStateOf(1) }
+    val context = LocalContext.current
+    var hasSelectedSettings by remember { mutableStateOf(false) }
+    var tulisanMode by remember { mutableStateOf(TulisanMode.DWI) }
+    var selectedLevel by remember { mutableStateOf(1) }
+
+    // Quiz game states
+    var currentQuestionIndex by remember { mutableStateOf(0) }
     var score by remember { mutableStateOf(0) }
+    var answered by remember { mutableStateOf(false) }
+    var selectedAnswer by remember { mutableStateOf<String?>(null) }
+    var isQuizCompleted by remember { mutableStateOf(false) }
+
+    // Safely retrieve questions for selected level
+    val questionsList = remember(selectedLevel, game) {
+        game.levels[selectedLevel] ?: game.levels.values.firstOrNull() ?: emptyList()
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .background(MaterialTheme.colorScheme.background),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("🎮 Bermain: ${game.tajuk}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = onBackToMenu) {
-            Text("Kembali ke Menu")
+        if (!hasSelectedSettings) {
+            // STEP 1: CHOOSE PRE-GAME SETTINGS
+            Text(
+                "⚙️ Tetapan Misi Permainan",
+                fontWeight = FontWeight.Black,
+                fontSize = 20.sp,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Pilih Mod Tulisan:", fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(TulisanMode.DWI to "Dwi-Tulisan", TulisanMode.JAWI to "Jawi Sahaja", TulisanMode.RUMI to "Rumi Sahaja").forEach { (mode, label) ->
+                            FilterChip(
+                                selected = tulisanMode == mode,
+                                onClick = { tulisanMode = mode },
+                                label = { Text(label, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Pilih Tahap Peringkat:", fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        game.levels.keys.sorted().forEach { lvl ->
+                            FilterChip(
+                                selected = selectedLevel == lvl,
+                                onClick = { selectedLevel = lvl },
+                                label = { Text("Tahap $lvl", fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                onClick = { hasSelectedSettings = true },
+                modifier = Modifier.fillMaxWidth().height(50.dp)
+            ) {
+                Text("▶️ MULAKAN MISI", fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = onBackToMenu,
+                modifier = Modifier.fillMaxWidth().height(50.dp)
+            ) {
+                Text("Kembali")
+            }
+        } else if (isQuizCompleted) {
+            // STEP 3: RESULT SCREEN
+            Text("🏆 Misi Selesai!", fontSize = 28.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Markah Anda: $score / ${questionsList.size}", fontSize = 18.sp, color = MaterialTheme.colorScheme.onBackground)
+            Text("Mata XP Diperoleh: ${score * 100} XP 🎉", fontSize = 14.sp, color = Color.Gray)
+            Spacer(modifier = Modifier.height(32.dp))
+            Button(
+                onClick = onBackToMenu,
+                modifier = Modifier.fillMaxWidth().height(50.dp)
+            ) {
+                Text("Kembali Ke Menu Utama")
+            }
+        } else {
+            // STEP 2: ACTIVE QUESTION SCREEN
+            if (questionsList.isNotEmpty() && currentQuestionIndex < questionsList.size) {
+                val soalan = questionsList[currentQuestionIndex]
+
+                Text(
+                    text = "Tahap $selectedLevel | Soalan ${currentQuestionIndex + 1} daripada ${questionsList.size}",
+                    color = Color.Gray,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                // Render question depending on chosen Tulisan Mode
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (tulisanMode == TulisanMode.JAWI || tulisanMode == TulisanMode.DWI) {
+                            Text(
+                                text = soalan.qJawi,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                        if (tulisanMode == TulisanMode.RUMI || tulisanMode == TulisanMode.DWI) {
+                            Text(
+                                text = soalan.qRumi,
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Answer Options List
+                val options = if (tulisanMode == TulisanMode.JAWI) soalan.jawiOptions else soalan.rumiOptions
+                val correctAnswer = if (tulisanMode == TulisanMode.JAWI) soalan.aJawi else soalan.aRumi
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    options.forEach { opt ->
+                        val isCorrect = opt == correctAnswer
+                        val isSelected = opt == selectedAnswer
+                        val btnColor = when {
+                            !answered -> MaterialTheme.colorScheme.surfaceVariant
+                            isCorrect -> Color(0xFF16A34A) // Green for correct answer
+                            isSelected -> Color(0xFFDC2626) // Red for selected wrong answer
+                            else -> MaterialTheme.colorScheme.surfaceVariant
+                        }
+
+                        Button(
+                            onClick = {
+                                if (!answered) {
+                                    selectedAnswer = opt
+                                    answered = true
+                                    if (isCorrect) {
+                                        score++
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(52.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = btnColor,
+                                contentColor = if (answered && (isCorrect || isSelected)) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        ) {
+                            Text(opt, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                if (answered) {
+                    Button(
+                        onClick = {
+                            if (currentQuestionIndex < questionsList.size - 1) {
+                                currentQuestionIndex++
+                                answered = false
+                                selectedAnswer = null
+                            } else {
+                                isQuizCompleted = true
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text(
+                            text = if (currentQuestionIndex < questionsList.size - 1) "Seterusnya ➡️" else "Selesai 🏆",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            } else {
+                // Fallback if level contains no questions
+                Text("Tiada soalan ditemui untuk tahap ini.", color = Color.Gray)
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(onClick = { hasSelectedSettings = false }) {
+                    Text("Pilih Tahap Lain")
+                }
+            }
         }
     }
 }

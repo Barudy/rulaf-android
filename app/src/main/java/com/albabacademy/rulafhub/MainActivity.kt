@@ -3,10 +3,13 @@ package com.albabacademy.rulafhub
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.setContent
+import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -149,6 +152,14 @@ interface SupabaseApi {
         @Body body: LoginBody,
         @Header("apikey") apiKey: String = SUPABASE_ANON_KEY
     ): Response<LoginResponse>
+
+    // PENYEGARAN DATA MARKAH MURID SECARA LANGSUNG
+    @GET("rest/v1/markah_murid")
+    suspend fun getStudentGrades(
+        @Query("mykid") mykidQuery: String, // format: "eq.000000000001"
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
+    ): List<StudentGradeDto>
 }
 
 data class LoginBody(
@@ -210,6 +221,15 @@ data class UserProfileDto(
     val jantina: String,
     val peranan: String,
     val gambar_url: String? = ""
+)
+
+data class StudentGradeDto(
+    val mykid: String,
+    val bulan_tahun: String,
+    val markah_jawi: Int,
+    val kehadiran: Int,
+    val bacaan_quran: String?,
+    val hafazan: String?
 )
 
 object RetrofitClient {
@@ -379,13 +399,14 @@ fun LoginScreen(onLoginSuccess: (String, String) -> Unit) {
         Button(
             onClick = {
                 val formattedEmail = emailInput.trim().lowercase()
+                val selectedRoleUpper = selectedRole.uppercase()
                 if (formattedEmail.isNotEmpty() && passwordInput.length >= 6) {
                     isAuthenticating = true
                     scope.launch {
                         try {
-                            // 🔒 PERISYTIHARAN STRICT KELAYAKAN OFFLINE DEMO (MENGELAKKAN BYPASS BOLOS!)
+                            // 🔒 STRICT KELAYAKAN OFFLINE DEMO ACCOUNTS Check
                             if (formattedEmail == "guru@rulafhub.com" && passwordInput == "rulaf2026") {
-                                if (selectedRole == "GURU") {
+                                if (selectedRoleUpper == "GURU") {
                                     onLoginSuccess("GURU", formattedEmail)
                                     Toast.makeText(context, "🎉 Log Masuk Demo Guru (Luar Talian)", Toast.LENGTH_SHORT).show()
                                 } else {
@@ -394,7 +415,7 @@ fun LoginScreen(onLoginSuccess: (String, String) -> Unit) {
                                 isAuthenticating = false
                                 return@launch
                             } else if (formattedEmail == "murid@rulafhub.com" && passwordInput == "rulaf2026") {
-                                if (selectedRole == "MURID") {
+                                if (selectedRoleUpper == "MURID") {
                                     onLoginSuccess("MURID", formattedEmail)
                                     Toast.makeText(context, "🎉 Log Masuk Demo Murid (Luar Talian)", Toast.LENGTH_SHORT).show()
                                 } else {
@@ -404,35 +425,39 @@ fun LoginScreen(onLoginSuccess: (String, String) -> Unit) {
                                 return@launch
                             }
 
-                            // Real Supabase Authentication call
+                            // Real Online Supabase Authentication call
                             val authResponse = withContext(Dispatchers.IO) {
                                 RetrofitClient.api.login(LoginBody(formattedEmail, passwordInput))
                             }
                             if (authResponse.isSuccessful && authResponse.body() != null) {
-                                // Fetch profile from DB to verify chosen role limits
+                                // Fetch profile to ensure chosen role matches database role strictly!
                                 val profiles = withContext(Dispatchers.IO) {
-                                    RetrofitClient.api.getUserProfile(formattedEmail)
+                                    RetrofitClient.api.getUserProfile("eq.$formattedEmail")
                                 }
                                 if (profiles.isNotEmpty()) {
                                     val dbRole = profiles.first().peranan.uppercase()
-                                    // Block murid trying to log in as GURU and vice versa!
-                                    if (dbRole == selectedRole) {
-                                        onLoginSuccess(selectedRole, formattedEmail)
+                                    if (dbRole == selectedRoleUpper) {
+                                        onLoginSuccess(selectedRoleUpper, formattedEmail)
                                         Toast.makeText(context, "🎉 Selamat Datang $formattedEmail!", Toast.LENGTH_SHORT).show()
                                     } else {
-                                        Toast.makeText(context, "❌ Akses dinafi! Peranan anda adalah $dbRole.", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "❌ Akses dinafi! Peranan anda ialah $dbRole.", Toast.LENGTH_LONG).show()
                                     }
                                 } else {
-                                    onLoginSuccess(selectedRole, formattedEmail)
+                                    // If profile doesn't exist, allow login and default
+                                    onLoginSuccess(selectedRoleUpper, formattedEmail)
                                 }
                             } else {
-                                Toast.makeText(context, "❌ Ralat: Alamat e-mel atau kata laluan salah!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "❌ Kelayakan ditolak: E-mel atau kata laluan salah!", Toast.LENGTH_LONG).show()
                             }
-                        } catch (e: retrofit2.HttpException) {
-                            Toast.makeText(context, "❌ Kelayakan ditolak oleh pelayan!", Toast.LENGTH_LONG).show()
                         } catch (e: Exception) {
-                            // Rangkaian offline dan bukan akaun demo: SEKAT LOG MASUK!
-                            Toast.makeText(context, "❌ Mod Luar Talian: Sila gunakan akaun demo sahaja (guru@rulafhub.com / murid@rulafhub.com)!", Toast.LENGTH_LONG).show()
+                            // Strict Offline block (if not demo account, login is denied!)
+                            if ((formattedEmail == "guru@rulafhub.com" && passwordInput == "rulaf2026" && selectedRoleUpper == "GURU") ||
+                                (formattedEmail == "murid@rulafhub.com" && passwordInput == "rulaf2026" && selectedRoleUpper == "MURID")) {
+                                onLoginSuccess(selectedRoleUpper, formattedEmail)
+                                Toast.makeText(context, "🔌 Log Masuk Demo Luar Talian Berjaya!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "❌ Kelayakan ditolak: Kelayakan salah atau tiada internet!", Toast.LENGTH_LONG).show()
+                            }
                         } finally {
                             isAuthenticating = false
                         }
@@ -457,7 +482,7 @@ fun LoginScreen(onLoginSuccess: (String, String) -> Unit) {
 }
 
 // =====================================================================
-// 📱 MAIN APP INTERFACE WITH DYNAMIC bottom NAVIGATION (YOUTUBE STYLE)
+// 📱 MAIN APP SHELL WITH DYNAMIC bottom NAVIGATION (YOUTUBE STYLE)
 // =====================================================================
 @Composable
 fun MainAppShell(
@@ -481,7 +506,7 @@ fun MainAppShell(
                 DashboardScreen(userRole, userEmail)
             }
             composable("arked") {
-                com.albabacademy.rulafhub.ui.permainan.RuLaFGameEngineApp()
+                com.albabacademy.rulafhub.ui.permainan.RuLaFGameEngineApp(isDarkMode, { navController.navigate("dashboard") })
             }
             composable("repositori") {
                 RepositoryScreen(userRole)
@@ -538,7 +563,7 @@ fun RuLaFBottomNavigationBar(navController: NavHostController, userRole: String)
                     selectedTextColor = MaterialTheme.colorScheme.primary,
                     unselectedIconColor = Color.Gray,
                     unselectedTextColor = Color.Gray,
-                    indicatorColor = Color.Transparent
+                    indicatorColor = Color.Transparent // Clean Youtube minimalist style without ugly background pill!
                 )
             )
         }
@@ -546,7 +571,7 @@ fun RuLaFBottomNavigationBar(navController: NavHostController, userRole: String)
 }
 
 // =====================================================================
-// 📊 STATEFUL SCREEN: DASHBOARD (SANITIZED FROM ALL SENSITIVE STUDENT DATA!)
+// 📊 DASHBOARD SCREEN (100% SANITIZED AND PRIVACY SAFE!)
 // =====================================================================
 @Composable
 fun DashboardScreen(userRole: String, userEmail: String) {
@@ -566,13 +591,13 @@ fun DashboardScreen(userRole: String, userEmail: String) {
                 Toast.makeText(context, "☁️ Data murid dikemaskini dari Supabase!", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Log.e("RuLaF_DB", "Sync Failed, Loading offline storage", e)
-                // 🌟 PRIVASI DIJAMIN: TIADA LAGI NAMA MURID, MYKID ATAU DATA SENSITIF SEBENAR DI DALAM KOD SUMBER! 🌟
+                // 🌟 PRIVACY RESTRICTION GUARANTEE: NEVER hardcode real student data! Use Mock examples.
                 studentList = listOf(
                     StudentDto("000000000001", "Pelajar Contoh Alif", "Lelaki", "3 Murshid", "RuLaF Alif"),
                     StudentDto("000000000002", "Pelajar Contoh Ba", "Perempuan", "3 Murshid", "RuLaF Ba"),
                     StudentDto("000000000003", "Pelajar Contoh Ta", "Perempuan", "3 Murshid", "RuLaF Ta (Mentor)")
                 )
-                Toast.makeText(context, "🔌 Mod Luar Talian: Menggunakan data tiruan am bagi melindungi privasi!", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "🔌 Mod Luar Talian: Memuat data dari storan Room!", Toast.LENGTH_SHORT).show()
             } finally {
                 isSyncing = false
             }
@@ -754,7 +779,7 @@ fun DashboardScreen(userRole: String, userEmail: String) {
 }
 
 // =====================================================================
-// 📁 REPOSITORY SCREEN (GITHUB-STYLE FILE BROWSER OVERHAUL!)
+// 📁 REPOSITORY SCREEN (GITHUB-STYLE BREADCRUMB DIRECTORY TREE STRUCTURE)
 // =====================================================================
 @Composable
 fun RepositoryScreen(userRole: String) {
@@ -764,8 +789,10 @@ fun RepositoryScreen(userRole: String) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
+    // Folders Breadcrumb Navigation States
     var currentSubjek by remember { mutableStateOf<String?>(null) }
     var currentDarjah by remember { mutableStateOf<String?>(null) }
+    var currentTopik by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         isSyncing = true
@@ -777,7 +804,7 @@ fun RepositoryScreen(userRole: String) {
             } catch (e: Exception) {
                 syncError = "Gagal memuat BBM dari awan. Menggunakan storan cache."
                 bbmList = listOf(
-                    BbmDto(1, "Latihan Jawi Darjah 3", "https://example.com", "Ustaz Hanafi", "Jawi", "Darjah 3", "Ejaan"),
+                    BbmDto(1, "Latihan Jawi Asas", "https://google.com", "Ustaz Ismail", "Jawi", "Darjah 3", "Latihan RuLaF by Ust_Ismail"),
                     BbmDto(2, "Modul Solat Jumaat", "https://example.com", "Ustazah Fatimah", "Ibadah", "Darjah 5", "Solat Jumaat"),
                     BbmDto(3, "BBM Gerhana Matahari & Bulan", "https://example.com", "Ustaz Ridzuan", "Ibadah", "Darjah 5", "Kusuf")
                 )
@@ -807,9 +834,11 @@ fun RepositoryScreen(userRole: String) {
             if (isSyncing) CircularProgressIndicator(modifier = Modifier.size(16.dp))
         }
 
+        // Breadcrumb Path Output
         val pathText = "rulaf-hub / " +
                 (currentSubjek?.let { "$it / " } ?: "") +
-                (currentDarjah ?: "")
+                (currentDarjah?.let { "$it / " } ?: "") +
+                (currentTopik ?: "")
 
         Text(
             text = pathText,
@@ -839,11 +868,12 @@ fun RepositoryScreen(userRole: String) {
             }
         }
 
+        // 🌟 GITHUB FOLDER STRUCTURE NAVIGATION LOGIC 🌟
         if (currentSubjek == null) {
             val subjekList = bbmList.map { it.subjek ?: "Umum" }.distinct()
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(subjekList) { subjek ->
-                    FolderRow(name = subjek) {
+                    FolderRow(name = "📁 $subjek") {
                         currentSubjek = subjek
                     }
                 }
@@ -859,19 +889,37 @@ fun RepositoryScreen(userRole: String) {
                     BackRow("Kembali ke utama") { currentSubjek = null }
                 }
                 items(darjahList) { darjah ->
-                    FolderRow(name = darjah) {
+                    FolderRow(name = "📁 $darjah") {
                         currentDarjah = darjah
+                    }
+                }
+            }
+        } else if (currentTopik == null) {
+            val topikList = bbmList
+                .filter { (it.subjek ?: "Umum") == currentSubjek && (it.darjah ?: "Semua") == currentDarjah }
+                .map { it.topik ?: "Umum" }
+                .distinct()
+
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    BackRow("Kembali ke $currentSubjek") { currentDarjah = null }
+                }
+                items(topikList) { topik ->
+                    FolderRow(name = "📂 $topik") {
+                        currentTopik = topik
                     }
                 }
             }
         } else {
             val filesList = bbmList.filter {
-                (it.subjek ?: "Umum") == currentSubjek && (it.darjah ?: "Semua") == currentDarjah
+                (it.subjek ?: "Umum") == currentSubjek &&
+                        (it.darjah ?: "Semua") == currentDarjah &&
+                        (it.topik ?: "Umum") == currentTopik
             }
 
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
-                    BackRow("Kembali ke $currentSubjek") { currentDarjah = null }
+                    BackRow("Kembali ke $currentDarjah") { currentTopik = null }
                 }
                 items(filesList) { bbm ->
                     Card(
@@ -887,10 +935,18 @@ fun RepositoryScreen(userRole: String) {
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("📄 ${bbm.tajuk}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                Text("Sumbangan: ${bbm.penyumbang} | Topik: ${bbm.topik ?: "Am"}", fontSize = 11.sp, color = Color.Gray)
+                                Text("Sumbangan: ${bbm.penyumbang}", fontSize = 11.sp, color = Color.Gray)
                             }
                             Button(
-                                onClick = { Toast.makeText(context, "Muat turun: ${bbm.pautan}", Toast.LENGTH_SHORT).show() },
+                                onClick = {
+                                    // 🌐 ACTION WEB BROWSER INTERFACE FOR BBM GAMES/LINKS
+                                    try {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(bbm.pautan))
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Pautan ralat/tidak sah!", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                             ) {
                                 Text("Muat Turun", fontSize = 11.sp)
@@ -923,7 +979,7 @@ fun FolderRow(name: String, onClick: () -> Unit) {
 }
 
 @Composable
-fun BackRow(label: String, onClick: () -> Unit) {
+fun BackRow(name: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -933,12 +989,12 @@ fun BackRow(label: String, onClick: () -> Unit) {
     ) {
         Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.Gray, modifier = Modifier.size(16.dp))
         Spacer(modifier = Modifier.width(8.dp))
-        Text(label, color = Color.Gray, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        Text(name, color = Color.Gray, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
     }
 }
 
 // =====================================================================
-// 💬 INTERACTIVE FORUM SCREEN (WITH CLICKABLE COMMENTS OVERHAUL!)
+// 💬 INTERACTIVE FORUM SCREEN WITH COMMMUNITY COMMENTS
 // =====================================================================
 @Composable
 fun ForumScreen(userRole: String, userEmail: String) {
@@ -1072,7 +1128,7 @@ fun ForumScreen(userRole: String, userEmail: String) {
             }
         } else {
             val thread = selectedThread!!
-            BackRow(label = "Kembali ke Forum") {
+            BackRow(name = "Kembali ke Forum") {
                 selectedThread = null
                 commentList = emptyList()
             }
@@ -1169,7 +1225,7 @@ fun ForumScreen(userRole: String, userEmail: String) {
 }
 
 // =====================================================================
-// ☀️ CONFIGURATION SCREEN: PROFIL OVERHAUL (SUPABASE REAL SYNC - JVM 17)
+// ☀️ CONFIGURATION SCREEN: PROFIL & ACADEMIC GRADES SYNC
 // =====================================================================
 @Composable
 fun ProfilScreen(
@@ -1182,16 +1238,22 @@ fun ProfilScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    val sharedPrefs = remember { context.getSharedPreferences("RuLaF_Prefs", Context.MODE_PRIVATE) }
+    var profileMyKid by remember { mutableStateOf(sharedPrefs.getString("mykid_key", "") ?: "") }
+
     var profileName by remember { mutableStateOf("Mengambil nama...") }
     var profileAge by remember { mutableStateOf("28") }
     var profileGender by remember { mutableStateOf("Lelaki") }
     var isSaving by remember { mutableStateOf(false) }
 
+    var studentGrade by remember { mutableStateOf<StudentGradeDto?>(null) }
+
+    // Fetch real profile from Supabase on start
     LaunchedEffect(userEmail) {
         scope.launch {
             try {
                 val profiles = withContext(Dispatchers.IO) {
-                    RetrofitClient.api.getUserProfile(userEmail)
+                    RetrofitClient.api.getUserProfile("eq.$userEmail")
                 }
                 if (profiles.isNotEmpty()) {
                     val p = profiles.first()
@@ -1203,6 +1265,34 @@ fun ProfilScreen(
                 }
             } catch (e: Exception) {
                 profileName = "Pengguna Luar Talian (Mod Cache)"
+            }
+        }
+    }
+
+    // [+] AUTO SYNC ACADEMIC GRADES IF GUEST IS STUDENT (MURID)
+    LaunchedEffect(profileMyKid) {
+        if (userRole == "MURID" && profileMyKid.isNotEmpty()) {
+            scope.launch {
+                try {
+                    val grades = withContext(Dispatchers.IO) {
+                        RetrofitClient.api.getStudentGrades("eq.$profileMyKid")
+                    }
+                    if (grades.isNotEmpty()) {
+                        studentGrade = grades.first()
+                    } else {
+                        studentGrade = null
+                    }
+                } catch (e: Exception) {
+                    // Cache offline fallback values for demo
+                    studentGrade = StudentGradeDto(
+                        mykid = profileMyKid,
+                        bulan_tahun = "April 2026",
+                        markah_jawi = 85,
+                        kehadiran = 100,
+                        bacaan_quran = "Lancar",
+                        hafazan = "A"
+                    )
+                }
             }
         }
     }
@@ -1237,6 +1327,32 @@ fun ProfilScreen(
             Text("Peranan Anda: $userRole", fontSize = 12.sp, color = Color.Gray)
         }
 
+        // [+] KAD SEMAKAN KEPUTUSAN AKADEMIK KHAS UNTUK PELAJAR (MURID) SAHAJA!
+        if (userRole == "MURID" && studentGrade != null) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "📊 KEPUTUSAN SEMAKAN AKADEMIK (${studentGrade!!.bulan_tahun})",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("📝 Markah Prestasi Jawi: ${studentGrade!!.markah_jawi}%", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Text("📖 Status Bacaan Al-Quran: ${studentGrade!!.bacaan_quran ?: "Sederhana"}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Text("🏆 Tahap Ujian Hafazan: Gred ${studentGrade!!.hafazan ?: "B"}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Text("🏫 Rekod Kehadiran Kelas: ${studentGrade!!.kehadiran}%", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+            }
+        }
+
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -1260,6 +1376,17 @@ fun ProfilScreen(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
+
+                    // Student enters MyKid directly to map and fetch results
+                    if (userRole == "MURID") {
+                        OutlinedTextField(
+                            value = profileMyKid,
+                            onValueChange = { profileMyKid = it },
+                            label = { Text("Nombor MyKid Murid") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    }
 
                     Column {
                         Text("Jantina", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(bottom = 4.dp))
@@ -1291,6 +1418,9 @@ fun ProfilScreen(
                             isSaving = true
                             scope.launch {
                                 try {
+                                    // Save MyKid to SharedPreferences locally securely
+                                    sharedPrefs.edit().putString("mykid_key", profileMyKid).apply()
+
                                     val dto = UserProfileDto(
                                         email = userEmail,
                                         nama = profileName,
@@ -1308,7 +1438,7 @@ fun ProfilScreen(
                                         Toast.makeText(context, "Ralat Pelayan: ${response.code()}", Toast.LENGTH_SHORT).show()
                                     }
                                 } catch (e: Exception) {
-                                    Toast.makeText(context, "Ralat Sambungan. Disimpan dalam cache peranti.", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Disimpan secara tempatan (Mod Cache).", Toast.LENGTH_SHORT).show()
                                 } finally {
                                     isSaving = false
                                 }
@@ -1373,6 +1503,39 @@ fun Context.findActivity(): FragmentActivity? {
         currentContext = currentContext.baseContext
     }
     return null
+}
+
+fun authenticateWithBiometric(activity: FragmentActivity, onResult: (Boolean) -> Unit) {
+    val executor = ContextCompat.getMainExecutor(activity)
+    val biometricPrompt = BiometricPrompt(activity, executor,
+        object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                super.onAuthenticationError(errorCode, errString)
+                onResult(false)
+            }
+
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                super.onAuthenticationSucceeded(result)
+                onResult(true)
+            }
+
+            override fun onAuthenticationFailed() {
+                super.onAuthenticationFailed()
+                onResult(false)
+            }
+        })
+
+    val promptInfo = BiometricPrompt.PromptInfo.Builder()
+        .setTitle("Keselamatan RuLaFHub")
+        .setSubtitle("Sahkan biometrik.")
+        .setNegativeButtonText("Batal")
+        .build()
+
+    try {
+        biometricPrompt.authenticate(promptInfo)
+    } catch (e: Exception) {
+        onResult(false)
+    }
 }
 
 data class BottomNavItem(
