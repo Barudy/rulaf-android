@@ -8,8 +8,8 @@ if (localPropertiesFile.exists()) {
     localProperties.load(FileInputStream(localPropertiesFile))
 }
 
-val supabaseUrl = localProperties.getProperty("supabase.url")?.let { "\"$it\"" } ?: "\"https://pzktjmtmkuicsjjjezjb.supabase.co/\""
-val supabaseAnonKey = localProperties.getProperty("supabase.anon.key")?.let { "\"$it\"" } ?: "\"YOUR_FALLBACK_KEY\""
+val supabaseUrl: String = localProperties.getProperty("supabase.url") ?: ""
+val supabaseAnonKey: String = localProperties.getProperty("supabase.anon.key") ?: ""
 
 plugins {
     id("com.android.application")
@@ -32,8 +32,8 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
-        buildConfigField("String", "SUPABASE_URL", supabaseUrl)
-        buildConfigField("String", "SUPABASE_ANON_KEY", supabaseAnonKey)
+        buildConfigField("String", "supabase.url", supabaseUrl)
+        buildConfigField("String", "supabase.anon.key", supabaseAnonKey)
     }
 
     buildTypes {
