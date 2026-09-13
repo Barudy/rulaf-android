@@ -8,8 +8,8 @@ if (localPropertiesFile.exists()) {
     localProperties.load(FileInputStream(localPropertiesFile))
 }
 
-val supabaseUrl: String = localProperties.getProperty("supabase.url") ?: ""
-val supabaseAnonKey: String = localProperties.getProperty("supabase.anon.key") ?: ""
+val supabaseUrl: String = localProperties.getProperty("SUPABASE_URL") ?: ""
+val supabaseAnonKey: String = localProperties.getProperty("SUPABASE_ANON_KEY") ?: ""
 
 plugins {
     id("com.android.application")
@@ -19,21 +19,21 @@ plugins {
 
 android {
     namespace = "com.albabacademy.rulafhub"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.albabacademy.rulafhub"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "2.0-stable"
+        targetSdk = 36
+        versionCode = 19
+        versionName = "1.7.14-Experimental"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
-        buildConfigField("String", "supabase.url", supabaseUrl)
-        buildConfigField("String", "supabase.anon.key", supabaseAnonKey)
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
     }
 
     buildTypes {
@@ -82,6 +82,7 @@ dependencies {
 
     // 🖼️ IMAGE LOADING
     implementation(libs.coil.compose)
+    implementation("io.coil-kt:coil-compose:2.6.0")
 
     // 🔒 2. BIOMETRIC AUTHENTICATION
     implementation("androidx.biometric:biometric:1.1.0")
@@ -104,7 +105,7 @@ dependencies {
     // 🧪 6. TESTING & TOOLING LIBRARIES
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:core:3.5.1")
+    androidTestImplementation(libs.androidx.espresso.core)
 
     androidTestImplementation("androidx.compose.ui:ui-test-junit4:$composeVersion")
     debugImplementation("androidx.compose.ui:ui-tooling:$composeVersion")

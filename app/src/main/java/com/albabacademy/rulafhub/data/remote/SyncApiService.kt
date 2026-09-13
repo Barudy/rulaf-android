@@ -10,6 +10,7 @@ import retrofit2.http.Header
 import retrofit2.http.Headers
 import retrofit2.http.POST
 import retrofit2.http.Query
+import com.google.gson.JsonElement
 
 // =====================================================================
 // 🔑 KONFIGURASI SUPABASE (Gantikan nilai sebenar Anon Key anda)
@@ -89,7 +90,9 @@ data class RekodKerajinanDto(
     val mykid: String,
     val subjek: String = "Jawi",
     val tugasan_siap: Int,
-    val status_hadir: Boolean = true
+    val status_hadir: Boolean = true,
+    val status_kehadiran: String? = null,
+    val catatan: String? = null
 )
 
 data class BbmDto(
@@ -133,12 +136,25 @@ data class SupabaseGradeDto(
     val hafazan: String
 )
 
+data class NotifikasiDto(
+    val id: Long,
+    val tajuk: String,
+    val mesej: String,
+    val kategori: String? = "hebahan",
+    val sasaran: String? = "Semua",
+    val pautan_tindakan: String? = null,
+    val is_aktif: Boolean = true,
+    val created_at: String? = null
+)
+
 data class HantarKerajinanRequest(
     val tarikh: String,
     val mykid: String,
     val subjek: String = "Jawi",
     val tugasan_siap: Int,
-    val status_hadir: Boolean = true
+    val status_hadir: Boolean = true,
+    val status_kehadiran: String? = null,
+    val catatan: String? = null
 )
 
 data class QuizDto(
@@ -147,7 +163,7 @@ data class QuizDto(
     val subjek: String,
     val deskripsi: String?,
     val darjah: String?,
-    val soalan: String // JSON string mengandungi soalan bertahap
+    val soalan: JsonElement? = null // JSON string mengandungi soalan bertahap
 )
 
 data class TambahBbmRequest(
@@ -232,15 +248,15 @@ interface SyncApiService {
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
     ): List<BbmDto>
 
-    @GET("rest/v1/rulaf_forum")
+    @GET("rest/v1/rulaf_forum?select=*&order=created_at.desc")
     suspend fun getForumThreads(
         @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
     ): List<ForumDto>
 
-    @GET("rest/v1/rulaf_komen")
+    @GET("rest/v1/rulaf_komen?select=*&order=created_at.asc")
     suspend fun getComments(
-        @Query("forum_id") forumIdQuery: String,
+        @Query("forum_id") forumIdFilter: String, // cth: "eq.1"
         @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
     ): List<CommentDto>
@@ -279,7 +295,7 @@ interface SyncApiService {
         "Content-Type: application/json",
         "Prefer: resolution=merge-duplicates"
     )
-    @POST("rest/v1/rekod_kerajinan_harian")
+    @POST("rest/v1/rekod_kerajinan_harian?on_conflict=tarikh,mykid")
     suspend fun hantarRekodKerajinan(
         @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
@@ -316,6 +332,14 @@ interface SyncApiService {
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
         @Body body: LeaderboardDto
     ): Response<Unit>
+
+    @GET("rest/v1/rulaf_notifikasi?select=*&order=created_at.desc&limit=5")
+    suspend fun getActiveNotifications(
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
+    ): List<NotifikasiDto>
+
+
 }
 
 // =====================================================================

@@ -1,4 +1,7 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class
+)
 package com.albabacademy.rulafhub.ui.permainan
 
 import android.widget.Toast
@@ -29,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.albabacademy.rulafhub.data.remote.HantarKerajinanRequest
 import com.albabacademy.rulafhub.data.remote.LeaderboardDto
 import com.albabacademy.rulafhub.data.remote.QuizDto
@@ -44,6 +48,8 @@ import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 
 // Warna Rasmi RuLaF
 private val ArchBlue = Color(0xFF1793D1)
@@ -52,6 +58,12 @@ private val SystemGreen = Color(0xFF10B981)
 
 enum class TulisanMode { DWI, JAWI, RUMI }
 
+enum class DifficultyLevel(val label: String, val desc: String, val timerSec: Int?, val multiplier: Double) {
+    SENANG("Senang", "Tiada Masa • Tulisan Rumi • 1.0x Skor", null, 1.0),
+    SEDERHANA("Sederhana", "30 Saat • Dwi-Tulisan • 1.5x Skor", 30, 1.5),
+    SUKAR("Sukar", "15 Saat • Tulisan Jawi Sahaja • 2.0x Skor", 15, 2.0)
+}
+
 data class SoalanModel(
     val qRumi: String,
     val qJawi: String,
@@ -59,7 +71,8 @@ data class SoalanModel(
     val jawiOptions: List<String>,
     val aRumi: String,
     val aJawi: String,
-    val gambarUrl: String? = null
+    val gambarUrl: String? = null,
+    val type: String = "pilihan" // 🧩 Sokongan jenis soalan: 'pilihan' atau 'susun_atur'
 )
 
 data class SiriGameModel(
@@ -70,6 +83,12 @@ data class SiriGameModel(
     val ikon: String,
     val kesukaran: String,
     val levels: Map<Int, List<SoalanModel>>
+)
+
+data class ChipState(
+    val id: Int,
+    val word: String,
+    val used: Boolean = false
 )
 
 // =====================================================================
@@ -87,16 +106,13 @@ fun RuLaFGameEngineApp(
     val context = LocalContext.current
     val isMurid = userRole.equals("Murid", ignoreCase = true) && userMyKid.isNotBlank() && userMyKid != "000000000000"
 
-    // 🔒 1. KUNCI KESELAMATAN: PENGGUNA BUKAN MURID DISEKAT
     if (!isMurid) {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
+                modifier = Modifier.fillMaxSize().padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -112,24 +128,16 @@ fun RuLaFGameEngineApp(
                     ) {
                         Text("⛔", fontSize = 48.sp)
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "AKSES PERMAINAN DISEKAT",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 16.sp,
-                            color = Color.Red
-                        )
+                        Text("AKSES PERMAINAN DISEKAT", fontWeight = FontWeight.Black, fontSize = 16.sp, color = Color.Red)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Modul arked RPG ini merupakan pentaksiran khas untuk akaun Murid berdaftar sahaja. Pengguna luar, Guru, atau akaun tanpa MyKid sah tidak dibenarkan bermain.",
+                            text = "Modul arked RPG ini merupakan pentaksiran khas untuk akaun Murid berdaftar sahaja.",
                             fontSize = 12.sp,
                             color = Color.Gray,
                             textAlign = TextAlign.Center
                         )
                         Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = onExit,
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                        ) {
+                        Button(onClick = onExit, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
                             Text("Kembali ke Papan Pemuka")
                         }
                     }
@@ -142,44 +150,59 @@ fun RuLaFGameEngineApp(
     var selectedGame by remember { mutableStateOf<SiriGameModel?>(null) }
     var currentBankSoalan by remember { mutableStateOf(senaraiSiriGameAsal) }
     var isAutoLoading by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         isAutoLoading = true
-        scope.launch {
-            try {
-                val githubQuizzes = withContext(Dispatchers.IO) {
-                    muatTurunSoalanJson("https://raw.githubusercontent.com/Barudy/rulaf-web/main/app/data/soalan.json")
-                }
-                val supabaseQuizzes = withContext(Dispatchers.IO) {
-                    try { RetrofitClient.api.getQuizzes() } catch (e: Exception) { emptyList<QuizDto>() }
-                }
+        try {
+            // 1. Muat turun dari GitHub (Statik)
+            val githubQuizzes = withContext(Dispatchers.IO) {
+                muatTurunSoalanJson("https://raw.githubusercontent.com/Barudy/rulaf-web/main/app/data/soalan.json")
+            }
 
-                val mergedList = mutableListOf<SiriGameModel>()
-                if (githubQuizzes != null) mergedList.addAll(githubQuizzes)
+            // 2. Muat turun dari Supabase (Dinamik Guru)
+            val supabaseQuizzes = withContext(Dispatchers.IO) {
+                try {
+                    RetrofitClient.api.getQuizzes()
+                } catch (e: Exception) {
+                    android.util.Log.e("RuLaF_API", "Ralat memuat turun dari Supabase: ${e.message}", e)
+                    emptyList()
+                }
+            }
 
-                supabaseQuizzes.forEach { q ->
-                    try {
-                        val parsedLevels = parseSupabaseQuizJson(q.soalan)
+            val mergedList = mutableListOf<SiriGameModel>()
+            if (githubQuizzes != null) mergedList.addAll(githubQuizzes)
+
+            // 3. Gabungkan kuiz Supabase ke dalam senarai Android
+            supabaseQuizzes.forEach { q ->
+                try {
+                    val soalanString = q.soalan?.toString() ?: "{}"
+                    val parsedLevels = parseSupabaseQuizJson(soalanString)
+
+                    if (parsedLevels.isNotEmpty()) {
                         mergedList.add(
                             SiriGameModel(
                                 id = q.id.toString(),
                                 tajuk = q.tajuk,
                                 subjek = q.subjek,
                                 deskripsi = q.deskripsi ?: "Kuiz pentaksiran arked di Supabase.",
-                                ikon = "📝",
+                                ikon = if (q.subjek.contains("Ibadah", ignoreCase = true)) "🕌" else "📝",
                                 kesukaran = q.darjah ?: "Semua",
                                 levels = parsedLevels
                             )
                         )
-                    } catch (_: Exception) {}
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("RuLaF_Parser", "Gagal parse kuiz id ${q.id}: ${e.message}")
                 }
-
-                if (mergedList.isNotEmpty()) currentBankSoalan = mergedList
-            } catch (_: Exception) {
-            } finally {
-                isAutoLoading = false
             }
+
+            if (mergedList.isNotEmpty()) {
+                currentBankSoalan = mergedList
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("RuLaF_Init", "Ralat keseluruhan inisialisasi: ${e.message}")
+        } finally {
+            isAutoLoading = false
         }
     }
 
@@ -231,7 +254,7 @@ fun RuLaFGameEngineApp(
 }
 
 // =====================================================================
-// MENU SENARAI MISI PERMAINAN
+// MENU SENARAI MISI
 // =====================================================================
 @Composable
 fun GameMenuScreen(senaraiGame: List<SiriGameModel>, onGameSelect: (SiriGameModel) -> Unit) {
@@ -276,7 +299,7 @@ fun GameMenuScreen(senaraiGame: List<SiriGameModel>, onGameSelect: (SiriGameMode
 }
 
 // =====================================================================
-// ARENA PERTEMPURAN RPG (TURN-BASED BATTLE ENGINE)
+// ARENA PERTEMPURAN RPG (MOD PILIHAN & SUSUN KALIMAT)
 // =====================================================================
 @Composable
 fun RpgBattleScreen(
@@ -288,7 +311,11 @@ fun RpgBattleScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Status Pertarungan
+    var isBattleStarted by remember { mutableStateOf(false) }
+    var selectedDifficulty by remember { mutableStateOf(DifficultyLevel.SEDERHANA) }
+    var timeLeft by remember { mutableStateOf<Int?>(30) }
+    var tulisanMode by remember { mutableStateOf(TulisanMode.DWI) }
+
     var currentLevel by remember { mutableStateOf(1) }
     val maxLevel = remember(game) { game.levels.keys.maxOrNull() ?: 1 }
     var currentIdx by remember { mutableStateOf(0) }
@@ -317,13 +344,61 @@ fun RpgBattleScreen(
     var isVictory by remember { mutableStateOf(false) }
     var showConfirmExitDialog by remember { mutableStateOf(false) }
 
-    // Papan Pendahulu
     var leaderboardList by remember { mutableStateOf<List<LeaderboardDto>>(emptyList()) }
     var showLeaderboard by remember { mutableStateOf(false) }
 
-    var tulisanMode by remember { mutableStateOf(TulisanMode.DWI) }
+    // 🧩 State Pengurusan Susun Atur Perkataan
+    var susunWords by remember { mutableStateOf<List<String>>(emptyList()) }
+    var availableChips by remember { mutableStateOf<List<ChipState>>(emptyList()) }
 
-    // Fungsi Penalti Disiplin: Keluar sebelum tamat = 0 Markah Kerajinan
+    val s = soalanList.getOrNull(currentIdx)
+
+    val rawOptions = when (tulisanMode) {
+        TulisanMode.RUMI -> {
+            if (!s?.rumiOptions.isNullOrEmpty()) s!!.rumiOptions
+            else if (s?.type == "susun_atur" && !s.aRumi.isNullOrBlank()) s.aRumi.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
+            else emptyList()
+        }
+        TulisanMode.JAWI, TulisanMode.DWI -> {
+            if (!s?.jawiOptions.isNullOrEmpty()) s!!.jawiOptions
+            else if (s?.type == "susun_atur" && !s.aJawi.isNullOrBlank()) s.aJawi.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
+            else s?.rumiOptions ?: emptyList()
+        }
+    }
+
+    val correctAnswer = when (tulisanMode) {
+        TulisanMode.RUMI -> s?.aRumi ?: ""
+        TulisanMode.JAWI, TulisanMode.DWI -> {
+            if (!s?.aJawi.isNullOrBlank()) s!!.aJawi else s?.aRumi ?: ""
+        }
+    }
+
+    val options = remember(currentIdx, currentLevel, selectedDifficulty, tulisanMode, s) {
+        if (selectedDifficulty == DifficultyLevel.SENANG) rawOptions else rawOptions.shuffled()
+    }
+
+    // Inisialisasi semula susunan perkataan setiap kali soalan bertukar
+    LaunchedEffect(currentIdx, currentLevel, s, tulisanMode) {
+        susunWords = emptyList()
+
+        if (s?.type == "susun_atur" && rawOptions.isNotEmpty()) {
+            var shuffledList = rawOptions.shuffled()
+            var percubaan = 0
+
+            // 🎯 Pastikan susunan TIDAK SAMA dengan susunan jawapan asal
+            while (shuffledList == rawOptions && rawOptions.size > 1 && percubaan < 15) {
+                shuffledList = rawOptions.shuffled()
+                percubaan++
+            }
+
+            availableChips = shuffledList.mapIndexed { index, word ->
+                ChipState(id = index, word = word, used = false)
+            }
+        } else {
+            availableChips = emptyList()
+        }
+    }
+
     fun rekodPenaltiKeluar() {
         scope.launch(Dispatchers.IO) {
             try {
@@ -340,59 +415,21 @@ fun RpgBattleScreen(
         }
     }
 
-    // Tangkap butang fizikal 'Back' telefon
-    BackHandler(enabled = !isVictory && !isGameOver) {
+    BackHandler(enabled = isBattleStarted && !isVictory && !isGameOver) {
         showConfirmExitDialog = true
     }
 
-    // Pengendalian Kemenangan Penuh
-    fun prosesKemenangan() {
-        isVictory = true
-        val skorTerkira = maxOf(0, (currentLevel * 100) + ((correctAnswers + 1) * 10) - (mistakes * 5))
-        finalScore = skorTerkira
-
-        scope.launch {
-            val tarikhHariIni = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-            try {
-                // 1. Tembak Rekod Leaderboard
-                val lbPayload = LeaderboardDto(
-                    mykid = userMyKid,
-                    nama_murid = userName,
-                    skor = skorTerkira,
-                    level_capai = currentLevel,
-                    jawapan_betul = correctAnswers + 1,
-                    jawapan_salah = mistakes,
-                    tarikh = tarikhHariIni
-                )
-                withContext(Dispatchers.IO) { RetrofitClient.api.postLeaderboard(body = lbPayload) }
-
-                // 2. Ganjaran Bonus +3 Markah ke rekod_kerajinan_harian
-                val kerajinanPayload = HantarKerajinanRequest(
-                    tarikh = tarikhHariIni,
-                    mykid = userMyKid,
-                    subjek = game.subjek,
-                    tugasan_siap = 3,
-                    status_hadir = true
-                )
-                withContext(Dispatchers.IO) { RetrofitClient.api.hantarRekodKerajinan(body = kerajinanPayload) }
-
-                // Muat turun senarai Top 10
-                val lbData = withContext(Dispatchers.IO) { RetrofitClient.api.getLeaderboard() }
-                leaderboardList = lbData
-                Toast.makeText(context, "🏆 Kemenangan & Bonus +3 Kerajinan Direkodkan!", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(context, "Disimpan secara luar talian.", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    // Serangan Berasaskan Jawapan
     fun serang(jawapanTeks: String, numberOpt: Int, jawapanBetul: String) {
         if (isAnswered || isGameOver || isVictory) return
 
         selectedOptIdx = numberOpt
         isAnswered = true
-        val isCorrect = jawapanTeks.trim() == jawapanBetul.trim()
+
+        // Normalisasi teks untuk toleransi ruang kosong sintaks
+        val normJawapan = jawapanTeks.trim().replace("\\s+".toRegex(), " ")
+        val normBetul = jawapanBetul.trim().replace("\\s+".toRegex(), " ")
+        val isCorrect = normJawapan.equals(normBetul, ignoreCase = true) && jawapanTeks != "[MASA TAMAT]"
+
         val damageDealt = kotlin.math.ceil(maxEnemyHp.toDouble() / maxOf(soalanList.size, 1)).toInt()
         val damageTaken = 25
 
@@ -406,8 +443,10 @@ fun RpgBattleScreen(
             val bakiHero = maxOf(0, playerHp - damageTaken)
             playerHp = bakiHero
 
-            if (isBossLevel) {
-                enemyHp = maxEnemyHp // Bos pulih HP penuh jika murid salah
+            if (jawapanTeks == "[MASA TAMAT]") {
+                battleLog = "⏰ MASA TAMAT! Hero menerima serangan balas ($damageTaken dmg)!"
+            } else if (isBossLevel) {
+                enemyHp = maxEnemyHp
                 battleLog = "❌ SALAH! Bos serang balas ($damageTaken dmg) & pulihkan HP penuh!"
             } else {
                 battleLog = "❌ SALAH! Hero menerima serangan balas sebanyak $damageTaken kerosakan!"
@@ -420,11 +459,67 @@ fun RpgBattleScreen(
         }
     }
 
+    LaunchedEffect(currentIdx, currentLevel, isAnswered, isBattleStarted, isGameOver, isVictory) {
+        if (!isBattleStarted || selectedDifficulty.timerSec == null || isAnswered || isGameOver || isVictory) {
+            timeLeft = null
+            return@LaunchedEffect
+        }
+        timeLeft = selectedDifficulty.timerSec
+        while ((timeLeft ?: 0) > 0 && !isAnswered && !isGameOver && !isVictory) {
+            kotlinx.coroutines.delay(1000L)
+            timeLeft = (timeLeft ?: 1) - 1
+        }
+        if (timeLeft == 0 && !isAnswered && !isGameOver && !isVictory) {
+            val qSemasa = soalanList.getOrNull(currentIdx)
+            val jwpn = if (tulisanMode == TulisanMode.JAWI) qSemasa?.aJawi ?: "" else qSemasa?.aRumi ?: ""
+            serang("[MASA TAMAT]", -1, jwpn)
+        }
+    }
+
+    fun prosesKemenangan() {
+        isVictory = true
+        val baseScore = maxOf(0, (currentLevel * 100) + ((correctAnswers + 1) * 10) - (mistakes * 5))
+        val skorTerkira = (baseScore * selectedDifficulty.multiplier).toInt()
+        finalScore = skorTerkira
+
+        scope.launch {
+            val tarikhHariIni = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            try {
+                val lbPayload = LeaderboardDto(
+                    mykid = userMyKid,
+                    nama_murid = userName,
+                    skor = skorTerkira,
+                    level_capai = currentLevel,
+                    jawapan_betul = correctAnswers + 1,
+                    jawapan_salah = mistakes,
+                    tarikh = tarikhHariIni
+                )
+                withContext(Dispatchers.IO) { RetrofitClient.api.postLeaderboard(body = lbPayload) }
+
+                val kerajinanPayload = HantarKerajinanRequest(
+                    tarikh = tarikhHariIni,
+                    mykid = userMyKid,
+                    subjek = game.subjek,
+                    tugasan_siap = 3,
+                    status_hadir = false,
+                    status_kehadiran = "latih_tubi", // Labelkan sebagai aktiviti latih tubi kendiri
+                    catatan = "Latih Tubi Arked RPG (+3 Kerajinan)"
+                )
+                withContext(Dispatchers.IO) { RetrofitClient.api.hantarRekodKerajinan(body = kerajinanPayload) }
+
+                val lbData = withContext(Dispatchers.IO) { RetrofitClient.api.getLeaderboard() }
+                leaderboardList = lbData
+                Toast.makeText(context, "🏆 Kemenangan & Bonus Direkodkan!", Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {}
+        }
+    }
+
     fun maraPusingan() {
-        if (currentIdx + 1 < soalanList.size && enemyHp > 0) {
+        if (currentIdx + 1 < soalanList.size) {
             currentIdx++
             isAnswered = false
             selectedOptIdx = null
+            timeLeft = selectedDifficulty.timerSec
         } else {
             if (currentLevel < maxLevel && !isGameOver) {
                 currentLevel++
@@ -434,10 +529,91 @@ fun RpgBattleScreen(
                 playerHp = minOf(maxPlayerHp, playerHp + 30)
                 val newEnemyHp = if (currentLevel == maxLevel) 150 else 100
                 enemyHp = newEnemyHp
+                timeLeft = selectedDifficulty.timerSec
             } else if (!isGameOver) {
                 prosesKemenangan()
             }
         }
+    }
+
+    if (!isBattleStarted) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("⚔️", fontSize = 42.sp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(game.tajuk, fontWeight = FontWeight.Black, fontSize = 16.sp, textAlign = TextAlign.Center)
+                    Text(game.deskripsi, fontSize = 11.sp, color = Color.Gray, textAlign = TextAlign.Center)
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("PILIH TAHAP KESUKARAN PERTEMPURAN:", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = ArchBlue)
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    DifficultyLevel.values().forEach { diff ->
+                        val isSelected = selectedDifficulty == diff
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable { selectedDifficulty = diff },
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isSelected) ArchBlue.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface
+                            ),
+                            border = BorderStroke(if (isSelected) 1.5.dp else 1.dp, if (isSelected) ArchBlue else Color.Gray.copy(alpha = 0.3f)),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(diff.label.uppercase(), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text(diff.desc, fontSize = 10.sp, color = Color.Gray)
+                                }
+                                if (isSelected) {
+                                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = ArchBlue, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Button(
+                        onClick = {
+                            tulisanMode = when (selectedDifficulty) {
+                                DifficultyLevel.SENANG -> TulisanMode.RUMI
+                                DifficultyLevel.SUKAR -> TulisanMode.JAWI
+                                DifficultyLevel.SEDERHANA -> TulisanMode.DWI
+                            }
+                            timeLeft = selectedDifficulty.timerSec
+                            isBattleStarted = true
+                        },
+                        modifier = Modifier.fillMaxWidth().height(46.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = ArchBlue),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("⚔️ [ MULAKAN PERTEMPURAN ]", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    TextButton(onClick = onBackToMenu) {
+                        Text("Batal & Kembali ke Menu", color = Color.Gray, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+        return
     }
 
     LazyColumn(
@@ -445,19 +621,26 @@ fun RpgBattleScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Amaran Keluar Manual (Penalti)
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Tahap $currentLevel / $maxLevel",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = ArchBlue
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Tahap $currentLevel / $maxLevel", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = ArchBlue)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(color = ArchBlue.copy(alpha = 0.15f), shape = RoundedCornerShape(4.dp)) {
+                        Text(
+                            text = "MOD: ${selectedDifficulty.label.uppercase()}",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ArchBlue,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
                 TextButton(
                     onClick = {
                         if (!isVictory && !isGameOver) showConfirmExitDialog = true
@@ -469,7 +652,6 @@ fun RpgBattleScreen(
             }
         }
 
-        // Amaran Merah Peringkat Bos
         if (isBossLevel && !isGameOver && !isVictory) {
             item {
                 Card(
@@ -489,7 +671,7 @@ fun RpgBattleScreen(
             }
         }
 
-        // ARENA BILAH HP HERO VS MUSUH
+        // Arena HP Hero vs Musuh
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -502,7 +684,6 @@ fun RpgBattleScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Sisi Hero
                         Column(modifier = Modifier.weight(1f)) {
                             Text("🧙‍♂️ $userName", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                             Text("$playerHp/$maxPlayerHp HP", fontSize = 9.sp, color = Color.Gray)
@@ -523,7 +704,6 @@ fun RpgBattleScreen(
                             modifier = Modifier.padding(horizontal = 12.dp)
                         )
 
-                        // Sisi Musuh
                         Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
                             Text(
                                 text = if (isBossLevel) "🐉 Bos Ifrit" else "🛡️ Pendekar Bayang",
@@ -555,37 +735,69 @@ fun RpgBattleScreen(
             }
         }
 
-        // KAWASAN SOALAN & PILIHAN SERANGAN
-        if (!isGameOver && !isVictory && soalanList.isNotEmpty() && currentIdx < soalanList.size) {
-            val s = soalanList[currentIdx]
+        // Soalan & Pilihan Jawapan
+        if (!isGameOver && !isVictory && s != null) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Soalan ${currentIdx + 1} / ${soalanList.size}",
+                        fontSize = 10.sp,
+                        color = ArchBlue,
+                        fontWeight = FontWeight.Bold
+                    )
 
-            // Togol Tulisan di Tahap 1
-            if (currentLevel == 1) {
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(TulisanMode.DWI to "Dwi-Tulisan", TulisanMode.JAWI to "Jawi", TulisanMode.RUMI to "Rumi").forEach { (m, l) ->
-                            FilterChip(
-                                selected = tulisanMode == m,
-                                onClick = { tulisanMode = m },
-                                label = { Text(l, fontSize = 9.sp) }
+                    if (timeLeft != null && !isAnswered) {
+                        Surface(
+                            color = if ((timeLeft ?: 30) <= 5) Color.Red else ArchOrange.copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                text = "⏳ Baki: $timeLeft saat",
+                                color = if ((timeLeft ?: 30) <= 5) Color.White else ArchOrange,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                     }
                 }
             }
 
-            // Paparan Imej Soalan (Coil AsyncImage)
-            if (!s.gambarUrl.isNullOrBlank()) {
+            // 🖼️ PAPAR GAMBAR SOALAN BERBINGKAI
+            if (!s.gambarUrl.isNullOrBlank() && s.gambarUrl != "null") {
                 item {
-                    AsyncImage(
-                        model = s.gambarUrl,
-                        contentDescription = "Gambar Soalan",
+                    Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(140.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                        contentScale = ContentScale.Fit
-                    )
+                            .height(170.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, ArchBlue.copy(alpha = 0.35f)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.03f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context)
+                                    .data(s.gambarUrl)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = "Gambar Rangsangan Soalan",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(8.dp)
+                                    .clip(RoundedCornerShape(6.dp)),
+                                contentScale = ContentScale.Fit
+                            )
+                        }
+                    }
                 }
             }
 
@@ -599,13 +811,6 @@ fun RpgBattleScreen(
                         modifier = Modifier.fillMaxWidth().padding(16.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(
-                            text = "Soalan ${currentIdx + 1} / ${soalanList.size}",
-                            fontSize = 10.sp,
-                            color = ArchBlue,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
                         if (tulisanMode == TulisanMode.JAWI || tulisanMode == TulisanMode.DWI) {
                             Text(
                                 text = s.qJawi,
@@ -628,49 +833,191 @@ fun RpgBattleScreen(
                 }
             }
 
-            // Butang Pilihan Serangan
-            val options = if (tulisanMode == TulisanMode.JAWI) s.jawiOptions else s.rumiOptions
-            val correctAnswer = if (tulisanMode == TulisanMode.JAWI) s.aJawi else s.aRumi
-
-            items(options.indices.toList()) { idx ->
-                val optText = options[idx]
-                val isCorrect = optText.trim() == correctAnswer.trim()
-                val isSelected = selectedOptIdx == idx
-
-                val btnColor = when {
-                    !isAnswered -> MaterialTheme.colorScheme.surface
-                    isCorrect -> SystemGreen
-                    isSelected -> Color.Red
-                    else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+            // 🎯 LOGIK CABANG: SUSUN ATUR VS PILIHAN STANDARD
+            if (s.type == "susun_atur") {
+                val arahSusunan = if (tulisanMode == TulisanMode.RUMI) {
+                    LayoutDirection.Ltr
+                } else {
+                    LayoutDirection.Rtl
                 }
 
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = !isAnswered) {
-                            serang(optText, idx, correctAnswer)
-                        },
-                    colors = CardDefaults.cardColors(containerColor = btnColor),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                item {
+                    CompositionLocalProvider(LocalLayoutDirection provides arahSusunan) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            // 1. Kotak Ayat Yang Sedang Disusun (Bermula dari Kanan untuk Jawi/Arab)
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .defaultMinSize(minHeight = 65.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                border = BorderStroke(1.5.dp, ArchBlue.copy(alpha = 0.6f)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    if (susunWords.isEmpty()) {
+                                        Text(
+                                            text = if (tulisanMode == TulisanMode.RUMI)
+                                                "Tekan perkataan di bawah untuk menyusun ayat..."
+                                            else
+                                                "تکن کلمه دباوه اونتوق مڽوسون ايات...",
+                                            fontSize = 11.sp,
+                                            color = Color.Gray,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    } else {
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.Start,
+                                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            susunWords.forEach { word ->
+                                                Surface(
+                                                    color = ArchBlue,
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    shadowElevation = 2.dp,
+                                                    modifier = Modifier.padding(horizontal = 3.dp, vertical = 2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = word,
+                                                        color = Color.White,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 15.sp,
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 2. Cebisan Perkataan (Word Chips) Mengikut Arah RTL
+                            FlowRow(
+                                horizontalArrangement = Arrangement.Center,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                            ) {
+                                availableChips.forEach { chip ->
+                                    Card(
+                                        modifier = Modifier
+                                            .padding(horizontal = 4.dp)
+                                            .clickable(enabled = !chip.used && !isAnswered) {
+                                                if (!chip.used && !isAnswered) {
+                                                    susunWords = susunWords + chip.word
+                                                    availableChips = availableChips.map {
+                                                        if (it.id == chip.id) it.copy(used = true) else it
+                                                    }
+                                                }
+                                            },
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (chip.used) MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
+                                            else MaterialTheme.colorScheme.surface
+                                        ),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (chip.used) Color.Gray.copy(alpha = 0.2f) else ArchBlue.copy(alpha = 0.5f)
+                                        ),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text(
+                                            text = chip.word,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (chip.used) Color.Gray.copy(alpha = 0.4f) else MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // 3. Butang Kawalan (Dikekalkan LTR supaya kedudukan butang konsisten)
+                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            if (!isAnswered) {
+                                                susunWords = emptyList()
+                                                availableChips = availableChips.map { it.copy(used = false) }
+                                            }
+                                        },
+                                        enabled = !isAnswered && susunWords.isNotEmpty(),
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("↺ Set Semula", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            val jawapanLengkap = susunWords.joinToString(" ")
+                                            serang(jawapanLengkap, 0, correctAnswer)
+                                        },
+                                        enabled = !isAnswered && susunWords.isNotEmpty(),
+                                        modifier = Modifier.weight(1.5f),
+                                        colors = ButtonDefaults.buttonColors(containerColor = SystemGreen),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("⚔️ [ SAHKAN & SERANG ]", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Render Pilihan Standard 3 Butang
+                items(options.indices.toList()) { idx ->
+                    val optText = options[idx]
+                    val isCorrect = optText.trim() == correctAnswer.trim()
+                    val isSelected = selectedOptIdx == idx
+
+                    val btnColor = when {
+                        !isAnswered -> MaterialTheme.colorScheme.surface
+                        isCorrect -> SystemGreen
+                        isSelected -> Color.Red
+                        else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !isAnswered) {
+                                serang(optText, idx, correctAnswer)
+                            },
+                        colors = CardDefaults.cardColors(containerColor = btnColor),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text(
-                            text = optText,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isAnswered && (isCorrect || isSelected)) Color.White else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = "[SERANG]",
-                            fontSize = 9.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = if (isAnswered && (isCorrect || isSelected)) Color.White else ArchBlue
-                        )
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = optText,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isAnswered && (isCorrect || isSelected)) Color.White else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = "[SERANG]",
+                                fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (isAnswered && (isCorrect || isSelected)) Color.White else ArchBlue
+                            )
+                        }
                     }
                 }
             }
@@ -688,7 +1035,6 @@ fun RpgBattleScreen(
             }
         }
 
-        // PAPARAN KEKALAHAN (GAME OVER)
         if (isGameOver) {
             item {
                 Column(
@@ -707,7 +1053,6 @@ fun RpgBattleScreen(
             }
         }
 
-        // PAPARAN KEMENANGAN & PAPAN PENDAHULU
         if (isVictory) {
             item {
                 Card(
@@ -757,12 +1102,7 @@ fun RpgBattleScreen(
 
             if (showLeaderboard) {
                 item {
-                    Text(
-                        text = "🏅 10 PENCAPAI TERATAS (LEADERBOARD)",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = ArchBlue
-                    )
+                    Text("🏅 10 PENCAPAI TERATAS", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = ArchBlue)
                 }
 
                 items(leaderboardList.indices.toList()) { i ->
@@ -777,12 +1117,7 @@ fun RpgBattleScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "#${i + 1}",
-                                    fontWeight = FontWeight.Black,
-                                    color = if (i == 0) ArchOrange else Color.Gray,
-                                    fontSize = 12.sp
-                                )
+                                Text("#${i + 1}", fontWeight = FontWeight.Black, color = if (i == 0) ArchOrange else Color.Gray, fontSize = 12.sp)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(entry.nama_murid, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
@@ -794,7 +1129,6 @@ fun RpgBattleScreen(
         }
     }
 
-    // Dialog Pengesahan Keluar (Penalti Disiplin)
     if (showConfirmExitDialog) {
         AlertDialog(
             onDismissRequest = { showConfirmExitDialog = false },
@@ -824,8 +1158,17 @@ fun RpgBattleScreen(
 }
 
 // =====================================================================
-// PARSER JSON SUPABASE & GITHUB RAW
+// PARSER JSON SUPABASE & GITHUB (SOKONGAN 'pilihan' & 'susun_atur')
 // =====================================================================
+private fun ekstrakUrlGambar(jsonObj: JSONObject): String? {
+    return when {
+        jsonObj.has("img") && !jsonObj.isNull("img") -> jsonObj.optString("img").takeIf { it.isNotBlank() && it != "null" }
+        jsonObj.has("gambar_url") && !jsonObj.isNull("gambar_url") -> jsonObj.optString("gambar_url").takeIf { it.isNotBlank() && it != "null" }
+        jsonObj.has("gambarUrl") && !jsonObj.isNull("gambarUrl") -> jsonObj.optString("gambarUrl").takeIf { it.isNotBlank() && it != "null" }
+        else -> null
+    }
+}
+
 fun parseSupabaseQuizJson(soalanJsonStr: String): Map<Int, List<SoalanModel>> {
     val levelsMap = mutableMapOf<Int, List<SoalanModel>>()
     try {
@@ -837,33 +1180,64 @@ fun parseSupabaseQuizJson(soalanJsonStr: String): Map<Int, List<SoalanModel>> {
                 val soalanJson = levelArray.getJSONObject(i)
                 val rumiObj = soalanJson.optJSONObject("rumi")
                 val jawiObj = soalanJson.optJSONObject("jawi")
-                val img = soalanJson.optString("gambar_url", null)
+                val img = ekstrakUrlGambar(soalanJson)
+
+                // Pengesanan Mod 'pilihan' atau 'susun_atur'
+                val qType = soalanJson.optString(
+                    "type",
+                    if (rumiObj?.optString("q")?.contains("[Susun Atur]") == true ||
+                        jawiObj?.optString("q")?.contains("[Susun Atur]") == true
+                    ) "susun_atur" else "pilihan"
+                )
 
                 if (rumiObj != null && jawiObj != null) {
                     val rumiOpts = mutableListOf<String>()
-                    val rumiOptsArr = rumiObj.getJSONArray("options")
-                    for (k in 0 until rumiOptsArr.length()) rumiOpts.add(rumiOptsArr.getString(k))
+                    val rumiOptsArr = rumiObj.optJSONArray("options")
+                    if (rumiOptsArr != null) {
+                        for (k in 0 until rumiOptsArr.length()) rumiOpts.add(rumiOptsArr.getString(k))
+                    }
 
                     val jawiOpts = mutableListOf<String>()
-                    val jawiOptsArr = jawiObj.getJSONArray("options")
-                    for (k in 0 until jawiOptsArr.length()) jawiOpts.add(jawiOptsArr.getString(k))
+                    val jawiOptsArr = jawiObj.optJSONArray("options")
+                    if (jawiOptsArr != null) {
+                        for (k in 0 until jawiOptsArr.length()) jawiOpts.add(jawiOptsArr.getString(k))
+                    }
+
+                    val aRumiText = rumiObj.optString("a", "")
+                    val aJawiText = jawiObj.optString("a", "")
+
+                    // Jika soalan susun atur dan options kosong, pecahkan ayat jawapan kepada perkataan
+                    if (qType == "susun_atur") {
+                        if (rumiOpts.isEmpty() && aRumiText.isNotBlank()) {
+                            rumiOpts.addAll(aRumiText.trim().split("\\s+".toRegex()).filter { it.isNotBlank() })
+                        }
+                        if (jawiOpts.isEmpty() && aJawiText.isNotBlank()) {
+                            jawiOpts.addAll(aJawiText.trim().split("\\s+".toRegex()).filter { it.isNotBlank() })
+                        }
+                    } else {
+                        if (rumiOpts.isEmpty() && aRumiText.isNotBlank()) rumiOpts.add(aRumiText)
+                        if (jawiOpts.isEmpty() && aJawiText.isNotBlank()) jawiOpts.add(aJawiText)
+                    }
 
                     soalanList.add(
                         SoalanModel(
-                            qRumi = rumiObj.getString("q"),
-                            qJawi = jawiObj.getString("q"),
+                            qRumi = rumiObj.optString("q", "Soalan Rumi"),
+                            qJawi = jawiObj.optString("q", "سوءالن جاوي"),
                             rumiOptions = rumiOpts,
                             jawiOptions = jawiOpts,
-                            aRumi = rumiObj.getString("a"),
-                            aJawi = jawiObj.getString("a"),
-                            gambarUrl = img
+                            aRumi = aRumiText,
+                            aJawi = aJawiText,
+                            gambarUrl = img,
+                            type = qType
                         )
                     )
                 }
             }
             if (soalanList.isNotEmpty()) levelsMap[levelNum] = soalanList
         }
-    } catch (_: Exception) {}
+    } catch (e: Exception) {
+        android.util.Log.e("RuLaF_Parser", "Ralat parsing JSON kuiz Supabase: ${e.message}")
+    }
     return levelsMap
 }
 
@@ -895,26 +1269,53 @@ suspend fun muatTurunSoalanJson(urlPath: String): List<SiriGameModel>? {
                             val soalanJson = levelArray.getJSONObject(i)
                             val rumiObj = soalanJson.optJSONObject("rumi")
                             val jawiObj = soalanJson.optJSONObject("jawi")
-                            val img = soalanJson.optString("gambar_url", null)
+                            val img = ekstrakUrlGambar(soalanJson)
+
+                            val qType = soalanJson.optString(
+                                "type",
+                                if (rumiObj?.optString("q")?.contains("[Susun Atur]") == true ||
+                                    jawiObj?.optString("q")?.contains("[Susun Atur]") == true
+                                ) "susun_atur" else "pilihan"
+                            )
 
                             if (rumiObj != null && jawiObj != null) {
                                 val rumiOpts = mutableListOf<String>()
-                                val rumiOptsArr = rumiObj.getJSONArray("options")
-                                for (k in 0 until rumiOptsArr.length()) rumiOpts.add(rumiOptsArr.getString(k))
+                                val rumiOptsArr = rumiObj.optJSONArray("options")
+                                if (rumiOptsArr != null) {
+                                    for (k in 0 until rumiOptsArr.length()) rumiOpts.add(rumiOptsArr.getString(k))
+                                }
 
                                 val jawiOpts = mutableListOf<String>()
-                                val jawiOptsArr = jawiObj.getJSONArray("options")
-                                for (k in 0 until jawiOptsArr.length()) jawiOpts.add(jawiOptsArr.getString(k))
+                                val jawiOptsArr = jawiObj.optJSONArray("options")
+                                if (jawiOptsArr != null) {
+                                    for (k in 0 until jawiOptsArr.length()) jawiOpts.add(jawiOptsArr.getString(k))
+                                }
+
+                                val aRumiText = rumiObj.optString("a", "")
+                                val aJawiText = jawiObj.optString("a", "")
+
+                                if (qType == "susun_atur") {
+                                    if (rumiOpts.isEmpty() && aRumiText.isNotBlank()) {
+                                        rumiOpts.addAll(aRumiText.trim().split("\\s+".toRegex()).filter { it.isNotBlank() })
+                                    }
+                                    if (jawiOpts.isEmpty() && aJawiText.isNotBlank()) {
+                                        jawiOpts.addAll(aJawiText.trim().split("\\s+".toRegex()).filter { it.isNotBlank() })
+                                    }
+                                } else {
+                                    if (rumiOpts.isEmpty() && aRumiText.isNotBlank()) rumiOpts.add(aRumiText)
+                                    if (jawiOpts.isEmpty() && aJawiText.isNotBlank()) jawiOpts.add(aJawiText)
+                                }
 
                                 soalanList.add(
                                     SoalanModel(
-                                        qRumi = rumiObj.getString("q"),
-                                        qJawi = jawiObj.getString("q"),
+                                        qRumi = rumiObj.optString("q", "Misi"),
+                                        qJawi = jawiObj.optString("q", "ميسي"),
                                         rumiOptions = rumiOpts,
                                         jawiOptions = jawiOpts,
-                                        aRumi = rumiObj.getString("a"),
-                                        aJawi = jawiObj.getString("a"),
-                                        gambarUrl = img
+                                        aRumi = aRumiText,
+                                        aJawi = aJawiText,
+                                        gambarUrl = img,
+                                        type = qType
                                     )
                                 )
                             }
@@ -928,7 +1329,7 @@ suspend fun muatTurunSoalanJson(urlPath: String): List<SiriGameModel>? {
                             tajuk = siriJson.optString("tajuk", "Misi Baru"),
                             subjek = siriJson.optString("subjek", "Ibadah"),
                             deskripsi = siriJson.optString("deskripsi", ""),
-                            ikon = if (siriJson.optString("subjek").contains("Ibadah")) "🕌" else "📝",
+                            ikon = if (siriJson.optString("subjek").contains("Ibadah", ignoreCase = true)) "🕌" else "📝",
                             kesukaran = "Sederhana",
                             levels = levelsMap
                         )
@@ -965,7 +1366,8 @@ val senaraiSiriGameAsal = listOf(
                     ),
                     "Solat yang wajib dilakukan oleh ahli Jumaat pada waktu Zohor seramai 40 orang",
                     "صلاة يڠ واجب دلاکوکن اوليه اهلي جمعة ڤد وقتو ظهر سراماي 40 اورڠ",
-                    null
+                    null,
+                    "pilihan"
                 )
             )
         )
