@@ -6,11 +6,22 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.DELETE
 import retrofit2.http.Header
 import retrofit2.http.Headers
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Query
 import com.google.gson.JsonElement
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.RequestBody
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.http.Multipart
+import retrofit2.http.Part
+import retrofit2.http.PATCH
+import retrofit2.http.Path
+import java.util.concurrent.TimeUnit
 
 // =====================================================================
 // 🔑 KONFIGURASI SUPABASE (Gantikan nilai sebenar Anon Key anda)
@@ -48,11 +59,16 @@ data class UserProfileDto(
     val umur: Int? = null,
     val jantina: String? = null,
     val peranan: String? = "Murid",
-    val mykid: String? = null
+    val mykid: String? = null,
+    val profile_picture_url: String? = null
 )
 
 data class LoginBody(
     val email: String,
+    val password: String
+)
+
+data class UpdatePasswordBody(
     val password: String
 )
 
@@ -188,6 +204,15 @@ data class TambahForumRequest(
     val kategori: String = "BUG"
 )
 
+data class VersiAppDto(
+    val id: Int,
+    val min_version_code: Int,
+    val latest_version_name: String,
+    val is_force_update: Boolean,
+    val update_url: String,
+    val changelog: String?
+)
+
 // =====================================================================
 // 🌐 INTERFACE API SUPABASE
 // =====================================================================
@@ -212,6 +237,14 @@ interface SyncApiService {
         @Body body: LoginBody,
         @Header("apikey") apiKey: String = SUPABASE_ANON_KEY
     ): Response<AuthResponseDto>
+
+    @Headers("Content-Type: application/json")
+    @PUT("auth/v1/user")
+    suspend fun updatePassword(
+        @Header("Authorization") auth: String,
+        @Body body: UpdatePasswordBody,
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY
+    ): Response<UserDto>
 
     @GET("rest/v1/markah_murid")
     suspend fun getStudentGrades(
@@ -339,7 +372,29 @@ interface SyncApiService {
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
     ): List<NotifikasiDto>
 
+    @GET("rest/v1/rulaf_versi_app?id=eq.1&select=*")
+    suspend fun getAppVersion(
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
+    ): List<VersiAppDto>
 
+    @Multipart
+    @POST("storage/v1/object/profile-pictures/{fileName}")
+    suspend fun uploadProfilePicture(
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Part fileName: String,
+        @Part("file") file: MultipartBody.Part
+    ): Response<Unit>
+
+    @Headers("Content-Type: application/json")
+    @PATCH("rest/v1/profil_pengguna?email=eq.{email}")
+    suspend fun updateProfilePictureUrl(
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Path("email") email: String,
+        @Body body: Map<String, String>
+    ): Response<Unit>
 }
 
 // =====================================================================
@@ -347,9 +402,25 @@ interface SyncApiService {
 // =====================================================================
 
 object RetrofitClient {
+    private val okHttpClient by lazy {
+        val builder = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(60, TimeUnit.SECONDS)
+        if (BuildConfig.DEBUG) {
+            builder.addInterceptor(
+                HttpLoggingInterceptor()
+                    .setLevel(HttpLoggingInterceptor.Level.BODY)
+            )
+        }
+        builder.build()
+    }
+
     val api: SyncApiService by lazy {
         Retrofit.Builder()
             .baseUrl(SUPABASE_BASE_URL)
+            .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(SyncApiService::class.java)

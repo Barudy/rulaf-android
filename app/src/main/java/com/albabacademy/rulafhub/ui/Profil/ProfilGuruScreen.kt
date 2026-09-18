@@ -1,9 +1,6 @@
 package com.albabacademy.rulafhub.ui.profil
 
-import android.content.Context
-import android.content.ContextWrapper
 import android.widget.Toast
-import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fingerprint
@@ -16,25 +13,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
-import androidx.fragment.app.FragmentActivity
-
-// [+] FUNGSI HELPER: Mencari FragmentActivity secara selamat bagi mengelakkan crash ClassCastException
-fun Context.findActivity(): FragmentActivity? {
-    var currentContext = this
-    while (currentContext is ContextWrapper) {
-        if (currentContext is FragmentActivity) {
-            return currentContext
-        }
-        currentContext = currentContext.baseContext
-    }
-    return null
-}
+import com.albabacademy.rulafhub.utils.AuthHelper
+import com.albabacademy.rulafhub.utils.AuthHelper.findActivity
 
 @Composable
 fun ProfilGuruScreen() {
     val context = LocalContext.current
-    val activity = remember(context) { context.findActivity() }
     var isAuthenticated by remember { mutableStateOf(false) }
 
     Column(
@@ -75,8 +59,9 @@ fun ProfilGuruScreen() {
                     .fillMaxWidth(0.8f)
                     .height(55.dp),
                 onClick = {
-                    if (activity != null) {
-                        authenticateWithBiometric(activity) { success ->
+                    val act = context.findActivity()
+                    if (act != null) {
+                        AuthHelper.authenticateWithBiometric(act) { success ->
                             isAuthenticated = success
                             if (success) {
                                 Toast.makeText(context, "Akses Dibenarkan!", Toast.LENGTH_SHORT).show()
@@ -96,33 +81,4 @@ fun ProfilGuruScreen() {
             }
         }
     }
-}
-
-fun authenticateWithBiometric(activity: FragmentActivity, onResult: (Boolean) -> Unit) {
-    val executor = ContextCompat.getMainExecutor(activity)
-    val biometricPrompt = BiometricPrompt(activity, executor,
-        object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                super.onAuthenticationError(errorCode, errString)
-                onResult(false)
-            }
-
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                super.onAuthenticationSucceeded(result)
-                onResult(true)
-            }
-
-            override fun onAuthenticationFailed() {
-                super.onAuthenticationFailed()
-                onResult(false)
-            }
-        })
-
-    val promptInfo = BiometricPrompt.PromptInfo.Builder()
-        .setTitle("Keselamatan RuLaFHub")
-        .setSubtitle("Sahkan biometrik anda untuk log masuk.")
-        .setNegativeButtonText("Batal")
-        .build()
-
-    biometricPrompt.authenticate(promptInfo)
 }

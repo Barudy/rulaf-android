@@ -27,6 +27,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -54,6 +55,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.albabacademy.rulafhub.data.remote.*
+import com.albabacademy.rulafhub.utils.AuthHelper
+import com.albabacademy.rulafhub.utils.AuthHelper.findActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -456,7 +459,15 @@ class MainActivity : FragmentActivity() {
         pendingIntent = PendingIntent.getActivity(this, 0, intent, flags)
 
         setContent {
-            var isDarkMode by remember { mutableStateOf(true) }
+            val context = LocalContext.current
+            val sharedPrefs = remember { context.getSharedPreferences("RuLaF_Prefs", Context.MODE_PRIVATE) }
+
+            var themeMode by remember { mutableStateOf(sharedPrefs.getString("theme_mode", "system") ?: "system") }
+            val isDarkMode = when (themeMode) {
+                "light" -> false
+                "dark" -> true
+                else -> isSystemInDarkTheme()
+            }
             var isLoggedIn by remember { mutableStateOf(false) }
             var userRole by remember { mutableStateOf("") }
 
@@ -465,8 +476,6 @@ class MainActivity : FragmentActivity() {
             }
 
             var loggedInUserEmail by remember { mutableStateOf("") }
-            val context = LocalContext.current
-            val sharedPrefs = remember { context.getSharedPreferences("RuLaF_Prefs", Context.MODE_PRIVATE) }
 
             // Log Masuk Automatik Tempatan
             LaunchedEffect(Unit) {
@@ -477,7 +486,7 @@ class MainActivity : FragmentActivity() {
 
                 if (isAutoLoginEnabled && savedEmail.isNotEmpty() && savedRole.isNotEmpty()) {
                     if (useBiometric) {
-                        authenticateWithBiometric(this@MainActivity) { success ->
+                        AuthHelper.authenticateWithBiometric(this@MainActivity) { success ->
                             if (success) {
                                 userRole = savedRole
                                 loggedInUserEmail = savedEmail
@@ -506,8 +515,12 @@ class MainActivity : FragmentActivity() {
                     MainAppShell(
                         userRole = userRole,
                         userEmail = loggedInUserEmail,
+                        themeMode = themeMode,
                         isDarkMode = isDarkMode,
-                        onThemeToggle = { isDarkMode = !isDarkMode },
+                        onThemeModeChange = { mode ->
+                            themeMode = mode
+                            sharedPrefs.edit().putString("theme_mode", mode).apply()
+                        },
                         onLogout = {
                             isLoggedIn = false
                             userRole = ""
@@ -691,8 +704,9 @@ fun LoginScreen(onLoginSuccess: (String, String) -> Unit) {
 fun MainAppShell(
     userRole: String,
     userEmail: String,
+    themeMode: String,
     isDarkMode: Boolean,
-    onThemeToggle: () -> Unit,
+    onThemeModeChange: (String) -> Unit,
     onLogout: () -> Unit
 ) {
     val navController = rememberNavController()
@@ -758,8 +772,9 @@ fun MainAppShell(
                 ProfilScreen(
                     userRole = userRole,
                     userEmail = userEmail,
+                    themeMode = themeMode,
                     isDarkMode = isDarkMode,
-                    onThemeToggle = onThemeToggle,
+                    onThemeModeChange = onThemeModeChange,
                     onLogout = onLogout,
                     onNavigateToSemakan = { navController.navigate("dashboard") }
                 )
@@ -1006,6 +1021,18 @@ fun DashboardScreen(
     // 🔔 State Notifikasi & Dialog Pop-up
     var senaraiNotifikasi by remember { mutableStateOf<List<NotifikasiDto>>(emptyList()) }
     var showNotisDialog by remember { mutableStateOf(false) }
+    var isMarkingNotisBaca by remember { mutableStateOf(false) }
+    var notisDibacaIds by remember { mutableStateOf(loadNotisDibacaIds(context)) }
+
+    // Bilangan notifikasi belum dibaca untuk lencana (badge)
+    val senaraiBelumBaca = senaraiNotifikasi.filter { it.id !in notisDibacaIds }
+
+    // Tandakan semua notifikasi terpapar sebagai telah dibaca
+    fun tandakanSemuaDibaca() {
+        val baru = (senaraiNotifikasi.map { it.id } + notisDibacaIds).toSet()
+        notisDibacaIds = baru
+        simpanNotisDibacaIds(context, baru)
+    }
 
     // Tarik notifikasi aktif secara automatik bila skrin dibuka
     LaunchedEffect(Unit) {
@@ -1170,22 +1197,27 @@ fun DashboardScreen(
                             Icon(
                                 imageVector = Icons.Filled.Notifications,
                                 contentDescription = "Notifikasi",
-                                tint = if (senaraiNotifikasi.isNotEmpty()) ArchBlue else Color.Gray,
+                                tint = if (senaraiBelumBaca.isNotEmpty()) ArchBlue else Color.Gray,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
                     }
 
-                    if (senaraiNotifikasi.isNotEmpty()) {
+                    if (senaraiBelumBaca.isNotEmpty()) {
                         Surface(
                             shape = CircleShape,
                             color = Color.Red,
                             border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.background),
-                            modifier = Modifier.align(Alignment.TopEnd).offset(x = 1.dp, y = (-1).dp)
+                            modifier = Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp)
                         ) {
-                            Box(modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .sizeIn(minWidth = 18.dp, minHeight = 18.dp)
+                                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Text(
-                                    text = if (senaraiNotifikasi.size > 99) "99+" else "${senaraiNotifikasi.size}",
+                                    text = if (senaraiBelumBaca.size > 99) "99+" else "${senaraiBelumBaca.size}",
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Black,
                                     color = Color.White
@@ -2024,12 +2056,28 @@ fun DashboardScreen(
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = { showNotisDialog = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = ArchBlue),
-                    shape = RoundedCornerShape(8.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Tutup", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    if (senaraiBelumBaca.isNotEmpty()) {
+                        TextButton(
+                            onClick = {
+                                tandakanSemuaDibaca()
+                                Toast.makeText(context, "Semua notifikasi ditandakan sebagai dibaca.", Toast.LENGTH_SHORT).show()
+                            },
+                            enabled = !isMarkingNotisBaca
+                        ) {
+                            Text("✓ Tanda Sudah Dibaca", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = ArchBlue)
+                        }
+                    }
+                    Button(
+                        onClick = { showNotisDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = ArchBlue),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Tutup", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         )
@@ -3221,8 +3269,9 @@ fun ForumScreen(userRole: String, userEmail: String) {
 fun ProfilScreen(
     userRole: String,
     userEmail: String,
+    themeMode: String,
     isDarkMode: Boolean,
-    onThemeToggle: () -> Unit,
+    onThemeModeChange: (String) -> Unit,
     onLogout: () -> Unit,
     onNavigateToSemakan: () -> Unit = {}
 ) {
@@ -3243,6 +3292,11 @@ fun ProfilScreen(
     var isAutoLoginEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_login_enabled", false)) }
     var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_login_enabled", false)) }
 
+    var profilePictureUrl by remember { mutableStateOf<String?>(null) }
+    var showProfilePictureDialog by remember { mutableStateOf(false) }
+    var isUploadingPicture by remember { mutableStateOf(false) }
+    var showEditProfileDialog by remember { mutableStateOf(false) }
+
     val isMurid = profileRole.equals("Murid", ignoreCase = true)
 
     LaunchedEffect(userEmail) {
@@ -3260,6 +3314,7 @@ fun ProfilScreen(
                 profileGender = userRecord.jantina ?: "Lelaki"
                 profileRole = userRecord.peranan ?: userRole
                 profileMyKid = userRecord.mykid ?: ""
+                profilePictureUrl = userRecord.profile_picture_url
             } else {
                 profileLoadError = "Maklumat pengguna tiada dalam pangkalan data. Sila simpan untuk mendaftar."
             }
@@ -3520,7 +3575,7 @@ fun ProfilScreen(
                             onCheckedChange = { isChecked ->
                                 val activity = context.findActivity()
                                 if (isChecked && activity != null) {
-                                    authenticateWithBiometric(activity) { success ->
+                                    AuthHelper.authenticateWithBiometric(activity) { success ->
                                         if (success) {
                                             isBiometricEnabled = true
                                             sharedPrefs.edit().putBoolean("biometric_login_enabled", true).apply()
@@ -3551,11 +3606,42 @@ fun ProfilScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(imageVector = if (isDarkMode) Icons.Filled.DarkMode else Icons.Filled.LightMode, contentDescription = "Theme")
+                        Icon(imageVector = Icons.Filled.Palette, contentDescription = "Theme")
                         Spacer(modifier = Modifier.width(12.dp))
-                        Text("Dwi-Tema (Dark/Light)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Column {
+                            Text("Tema Paparan", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(
+                                "Pilih Dark, Light, atau ikut sistem peranti.",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
                     }
-                    Switch(checked = isDarkMode, onCheckedChange = { onThemeToggle() })
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(
+                            "system" to "Sistem",
+                            "light" to "Light",
+                            "dark" to "Dark"
+                        ).forEach { (mode, label) ->
+                            FilterChip(
+                                selected = themeMode == mode,
+                                onClick = { onThemeModeChange(mode) },
+                                label = {
+                                    Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                },
+                                modifier = Modifier.weight(1f),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = MaterialTheme.colorScheme.surface,
+                                    selectedContainerColor = ArchBlue,
+                                    selectedLabelColor = Color.White,
+                                    labelColor = MaterialTheme.colorScheme.onSurface
+                                )
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -3573,48 +3659,23 @@ fun ProfilScreen(
     }
 }
 
-fun Context.findActivity(): FragmentActivity? {
-    var currentContext = this
-    while (currentContext is ContextWrapper) {
-        if (currentContext is FragmentActivity) {
-            return currentContext
-        }
-        currentContext = currentContext.baseContext
+fun loadNotisDibacaIds(context: Context): Set<Long> {
+    return try {
+        context.getSharedPreferences("RuLaF_Prefs", Context.MODE_PRIVATE)
+            .getString("notis_dibaca_ids", "")
+            ?.split(",")
+            ?.mapNotNull { it.trim().toLongOrNull() }
+            ?.toSet() ?: emptySet()
+    } catch (_: Exception) {
+        emptySet()
     }
-    return null
 }
 
-fun authenticateWithBiometric(activity: FragmentActivity, onResult: (Boolean) -> Unit) {
-    val executor = ContextCompat.getMainExecutor(activity)
-    val biometricPrompt = BiometricPrompt(activity, executor,
-        object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                super.onAuthenticationError(errorCode, errString)
-                onResult(false)
-            }
-
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                super.onAuthenticationSucceeded(result)
-                onResult(true)
-            }
-
-            override fun onAuthenticationFailed() {
-                super.onAuthenticationFailed()
-                onResult(false)
-            }
-        })
-
-    val promptInfo = BiometricPrompt.PromptInfo.Builder()
-        .setTitle("Keselamatan RuLaFHub")
-        .setSubtitle("Sahkan identiti anda menggunakan sidik jari.")
-        .setNegativeButtonText("Batal")
-        .build()
-
-    try {
-        biometricPrompt.authenticate(promptInfo)
-    } catch (e: Exception) {
-        onResult(false)
-    }
+fun simpanNotisDibacaIds(context: Context, ids: Set<Long>) {
+    context.getSharedPreferences("RuLaF_Prefs", Context.MODE_PRIVATE)
+        .edit()
+        .putString("notis_dibaca_ids", ids.joinToString(","))
+        .apply()
 }
 
 @Composable
