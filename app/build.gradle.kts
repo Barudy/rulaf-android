@@ -25,8 +25,8 @@ android {
         applicationId = "com.albabacademy.rulafhub"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20
-        versionName = "1.7.15-Experimental"
+        versionCode = 21
+        versionName = "1.7.16-Experimental"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

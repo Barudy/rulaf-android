@@ -36,10 +36,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.navigation.NavHostController
+import coil.compose.AsyncImage
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -320,6 +323,48 @@ suspend fun muatNaikFailKeModulRulaf(
         }
     } catch (e: Exception) {
         android.util.Log.e("RuLaF_Storage", "Ralat Sambungan: ${e.message}", e)
+        null
+    }
+}
+
+// 📷 Muat naik gambar profil ke Supabase Storage (bucket: profile-pictures)
+suspend fun muatNaikGambarProfilKeStoran(
+    context: Context,
+    uri: Uri
+): String? = withContext(Dispatchers.IO) {
+    try {
+        val projectUrl = "https://pzktjmtmkuicsjjjezjb.supabase.co"
+        val namaAsal = dapatkanNamaFailFizikal(context, uri)
+        val fileExt = namaAsal.substringAfterLast('.', "jpg").lowercase()
+        val namaBersih = "profil_" + System.currentTimeMillis()
+        val storagePath = "$namaBersih.$fileExt"
+
+        val uploadUrl = URL("$projectUrl/storage/v1/object/profile-pictures/$storagePath")
+        val connection = (uploadUrl.openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
+            setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+            val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
+            setRequestProperty("Content-Type", mimeType)
+            connectTimeout = 30000
+            readTimeout = 30000
+        }
+
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            connection.outputStream.use { output ->
+                input.copyTo(output)
+            }
+        }
+
+        if (connection.responseCode in 200..299) {
+            "$projectUrl/storage/v1/object/public/profile-pictures/$storagePath"
+        } else {
+            android.util.Log.e("RuLaF_Profil", "Ralat Muat Naik HTTP: ${connection.responseCode}")
+            null
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("RuLaF_Profil", "Ralat Muat Naik: ${e.message}", e)
         null
     }
 }
@@ -3292,6 +3337,9 @@ fun ProfilScreen(
     var isAutoLoginEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_login_enabled", false)) }
     var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_login_enabled", false)) }
 
+    var isProfilConfigExpanded by rememberSaveable { mutableStateOf(true) }
+    var isPetiSimpananExpanded by rememberSaveable { mutableStateOf(false) }
+
     var profilePictureUrl by remember { mutableStateOf<String?>(null) }
     var showProfilePictureDialog by remember { mutableStateOf(false) }
     var isUploadingPicture by remember { mutableStateOf(false) }
@@ -3333,32 +3381,167 @@ fun ProfilScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
+            val profilPicturePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+                contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+            ) { uri: Uri? ->
+                if (uri != null) {
+                    scope.launch {
+                        isUploadingPicture = true
+                        try {
+                            val urlBaru = muatNaikGambarProfilKeStoran(context, uri)
+                            if (urlBaru != null) {
+                                val simpanan = withContext(Dispatchers.IO) {
+                                    RetrofitClient.api.updateProfilePictureUrl(
+                                        email = userEmail,
+                                        body = mapOf("profile_picture_url" to urlBaru)
+                                    )
+                                }
+                                profilePictureUrl = urlBaru
+                                if (simpanan.isSuccessful) {
+                                    Toast.makeText(context, "✓ Gambar profil dikemas kini!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Gambar dinaikkan, tetapi pautan gagal disimpan.", Toast.LENGTH_LONG).show()
+                                }
+                            } else {
+                                Toast.makeText(context, "Gagal memuat naik gambar. Sila cuba lagi.", Toast.LENGTH_LONG).show()
+                            }
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Ralat semasa memuat naik gambar.", Toast.LENGTH_LONG).show()
+                        } finally {
+                            isUploadingPicture = false
+                        }
+                    }
+                }
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box {
+                    Box(
+                        modifier = Modifier
+                            .size(110.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { profilPicturePicker.launch("image/*") },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (profilePictureUrl != null) {
+                            AsyncImage(
+                                model = profilePictureUrl,
+                                contentDescription = "Gambar Profil",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Filled.Person,
+                                contentDescription = "Tiada Gambar",
+                                modifier = Modifier.size(56.dp),
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+                            )
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(ArchBlue)
+                            .clickable { profilPicturePicker.launch("image/*") },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isUploadingPicture) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Filled.CameraAlt,
+                                contentDescription = "Tukar Gambar",
+                                modifier = Modifier.size(18.dp),
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Profil",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 22.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = if (profileName.isNotBlank()) "$profileName • $userEmail" else userEmail,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+        }
+
+        item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isProfilConfigExpanded = !isProfilConfigExpanded }
+                            .padding(16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "rulaf-config(1) - PROFIL & TETAPAN",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 13.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurface
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.Person,
+                                contentDescription = "Profil",
+                                tint = ArchBlue
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "PROFIL & TETAPAN",
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 13.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = if (profileName.isNotBlank()) profileName else "USER_ID: $userEmail",
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = if (isProfilConfigExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = "Expand",
+                            tint = Color.Gray
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Divider()
-                    Spacer(modifier = Modifier.height(12.dp))
+                    AnimatedVisibility(visible = isProfilConfigExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+                        ) {
+                            Divider()
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                    Text(
-                        text = "USER_ID: $userEmail",
+                            Text(
+                                text = "USER_ID: $userEmail",
                         color = SystemGreen,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
@@ -3529,117 +3712,207 @@ fun ProfilScreen(
                                 }
                             }
                         }
-                    }
-                }
-            }
-        }
-
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Peti Simpanan Kelayakan & Keselamatan", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    Divider(modifier = Modifier.padding(vertical = 4.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Daftar Masuk Automatik", fontSize = 12.sp)
-                        Switch(
-                            checked = isAutoLoginEnabled,
-                            onCheckedChange = { isChecked ->
-                                isAutoLoginEnabled = isChecked
-                                sharedPrefs.edit().apply {
-                                    putBoolean("auto_login_enabled", isChecked)
-                                    putString("saved_email", userEmail)
-                                    putString("saved_role", profileRole)
-                                    apply()
-                                }
-                            }
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Daftar Masuk Sidik Jari (Fingerprint)", fontSize = 12.sp)
-                        Switch(
-                            checked = isBiometricEnabled,
-                            onCheckedChange = { isChecked ->
-                                val activity = context.findActivity()
-                                if (isChecked && activity != null) {
-                                    AuthHelper.authenticateWithBiometric(activity) { success ->
-                                        if (success) {
-                                            isBiometricEnabled = true
-                                            sharedPrefs.edit().putBoolean("biometric_login_enabled", true).apply()
-                                        } else {
-                                            isBiometricEnabled = false
-                                        }
-                                    }
-                                } else {
-                                    isBiometricEnabled = false
-                                    sharedPrefs.edit().putBoolean("biometric_login_enabled", false).apply()
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-        }
-
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(imageVector = Icons.Filled.Palette, contentDescription = "Theme")
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("Tema Paparan", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                            Text(
-                                "Pilih Dark, Light, atau ikut sistem peranti.",
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
                         }
                     }
+                }
+            }
+        }
+        }
+
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isPetiSimpananExpanded = !isPetiSimpananExpanded }
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        listOf(
-                            "system" to "Sistem",
-                            "light" to "Light",
-                            "dark" to "Dark"
-                        ).forEach { (mode, label) ->
-                            FilterChip(
-                                selected = themeMode == mode,
-                                onClick = { onThemeModeChange(mode) },
-                                label = {
-                                    Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                },
-                                modifier = Modifier.weight(1f),
-                                colors = FilterChipDefaults.filterChipColors(
-                                    containerColor = MaterialTheme.colorScheme.surface,
-                                    selectedContainerColor = ArchBlue,
-                                    selectedLabelColor = Color.White,
-                                    labelColor = MaterialTheme.colorScheme.onSurface
-                                )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.Lock,
+                                contentDescription = "Keselamatan",
+                                tint = ArchBlue
                             )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    "Peti Simpanan Kelayakan & Keselamatan",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    maxLines = 2
+                                )
+                                Text(
+                                    when {
+                                        isAutoLoginEnabled && isBiometricEnabled -> "Auto-login & sidik jari aktif."
+                                        isAutoLoginEnabled -> "Daftar masuk automatik aktif."
+                                        isBiometricEnabled -> "Sidik jari diaktifkan."
+                                        else -> "Tiada tetapan keselamatan aktif."
+                                    },
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = if (isPetiSimpananExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = "Expand",
+                            tint = Color.Gray
+                        )
+                    }
+
+                    AnimatedVisibility(visible = isPetiSimpananExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Divider(modifier = Modifier.padding(vertical = 4.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Daftar Masuk Automatik", fontSize = 12.sp)
+                                Switch(
+                                    checked = isAutoLoginEnabled,
+                                    onCheckedChange = { isChecked ->
+                                        isAutoLoginEnabled = isChecked
+                                        sharedPrefs.edit().apply {
+                                            putBoolean("auto_login_enabled", isChecked)
+                                            putString("saved_email", userEmail)
+                                            putString("saved_role", profileRole)
+                                            apply()
+                                        }
+                                    }
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Daftar Masuk Sidik Jari (Fingerprint)", fontSize = 12.sp)
+                                Switch(
+                                    checked = isBiometricEnabled,
+                                    onCheckedChange = { isChecked ->
+                                        val activity = context.findActivity()
+                                        if (isChecked && activity != null) {
+                                            AuthHelper.authenticateWithBiometric(activity) { success ->
+                                                if (success) {
+                                                    isBiometricEnabled = true
+                                                    sharedPrefs.edit().putBoolean("biometric_login_enabled", true).apply()
+                                                } else {
+                                                    isBiometricEnabled = false
+                                                }
+                                            }
+                                        } else {
+                                            isBiometricEnabled = false
+                                            sharedPrefs.edit().putBoolean("biometric_login_enabled", false).apply()
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            var isThemeExpanded by remember { mutableStateOf(false) }
+            val themeOptions = listOf(
+                Triple("system", "Sistem", "Ikut tema telefon anda secara automatik."),
+                Triple("light", "Cerah", "Sentiasa gunakan tema terang."),
+                Triple("dark", "Gelap", "Sentiasa gunakan tema gelap.")
+            )
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isThemeExpanded = !isThemeExpanded }
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Filled.Palette, contentDescription = "Theme")
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("Tema Paparan", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(
+                                    themeOptions.firstOrNull { it.first == themeMode }?.third
+                                        ?: "Ikut tema telefon anda secara automatik.",
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = if (isThemeExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = "Expand theme options",
+                            tint = Color.Gray
+                        )
+                    }
+
+                    AnimatedVisibility(visible = isThemeExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+                        ) {
+                            Divider(
+                                modifier = Modifier.padding(bottom = 4.dp),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                            )
+                            themeOptions.forEach { (mode, label, description) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onThemeModeChange(mode)
+                                            isThemeExpanded = false
+                                        }
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = themeMode == mode,
+                                        onClick = {
+                                            onThemeModeChange(mode)
+                                            isThemeExpanded = false
+                                        },
+                                        colors = RadioButtonDefaults.colors(selectedColor = ArchBlue)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(label, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                        Text(
+                                            description,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
