@@ -85,6 +85,7 @@ import com.albabacademy.rulafhub.ui.components.KalendarKehadiranMurid
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import kotlinx.coroutines.withContext
 
 
@@ -202,10 +203,10 @@ fun BetaWarningDialog(
                 )
 
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("• Modul Kuiz RPG Susun Kalimat (RTL Jawi & Arab)", fontSize = 10.sp)
-                    Text("• Muat naik fail terus ke storan awan (modul-rulaf)", fontSize = 10.sp)
-                    Text("• Pengasingan hak milik folder repositori guru (Draft Box)", fontSize = 10.sp)
-                    Text("• Pengiraan automatik Kumpulan RuLaF berasaskan rubrik 60/40", fontSize = 10.sp)
+                    Text("• Perubahan pada notifikasi di mana, kami telah menambah fitur mark as read / sudah dibaca", fontSize = 10.sp)
+                    Text("• Mengemas kini bahagian profil di mana bahagian tetapan sudah ditambah baik", fontSize = 10.sp)
+                    Text("• Penambahan dasar privasi dan perihal aplikasi", fontSize = 10.sp)
+                    Text("• Meningkatkan prestasi aplikasi dari semasa ke semasa", fontSize = 10.sp)
                 }
 
                 Divider(color = Color.Gray.copy(alpha = 0.2f))
@@ -327,20 +328,21 @@ suspend fun muatNaikFailKeModulRulaf(
     }
 }
 
-// 📷 Muat naik gambar profil ke Supabase Storage (bucket: profile-pictures)
+// 📷 Muat naik gambar profil ke Supabase Storage (bucket: modul-rulaf)
 suspend fun muatNaikGambarProfilKeStoran(
     context: Context,
     uri: Uri
 ): String? = withContext(Dispatchers.IO) {
+    var connection: HttpURLConnection? = null
     try {
         val projectUrl = "https://pzktjmtmkuicsjjjezjb.supabase.co"
         val namaAsal = dapatkanNamaFailFizikal(context, uri)
         val fileExt = namaAsal.substringAfterLast('.', "jpg").lowercase()
         val namaBersih = "profil_" + System.currentTimeMillis()
-        val storagePath = "$namaBersih.$fileExt"
+        val storagePath = "profil-pengguna/$namaBersih.$fileExt"
 
-        val uploadUrl = URL("$projectUrl/storage/v1/object/profile-pictures/$storagePath")
-        val connection = (uploadUrl.openConnection() as HttpURLConnection).apply {
+        val uploadUrl = URL("$projectUrl/storage/v1/object/modul-rulaf/$storagePath")
+        connection = (uploadUrl.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
             setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
@@ -358,14 +360,54 @@ suspend fun muatNaikGambarProfilKeStoran(
         }
 
         if (connection.responseCode in 200..299) {
-            "$projectUrl/storage/v1/object/public/profile-pictures/$storagePath"
+            "$projectUrl/storage/v1/object/public/modul-rulaf/$storagePath"
         } else {
-            android.util.Log.e("RuLaF_Profil", "Ralat Muat Naik HTTP: ${connection.responseCode}")
+            val ralat = connection.errorStream?.bufferedReader()?.use { it.readText() }
+            android.util.Log.e("RuLaF_Profil", "Ralat Muat Naik HTTP: ${connection.responseCode} - $ralat")
             null
         }
     } catch (e: Exception) {
         android.util.Log.e("RuLaF_Profil", "Ralat Muat Naik: ${e.message}", e)
         null
+    } finally {
+        connection?.disconnect()
+    }
+}
+
+// 💾 Simpan pautan gambar profil ke profil_pengguna (PATCH/UPDATE — upsert diblok oleh RLS anon)
+suspend fun simpanPautanGambarProfil(
+    email: String,
+    urlGambar: String
+): Int? = withContext(Dispatchers.IO) {
+    val projectUrl = "https://pzktjmtmkuicsjjjezjb.supabase.co"
+    val emailEncoded = URLEncoder.encode("eq.$email", "UTF-8")
+    var connection: HttpURLConnection? = null
+    try {
+        val patchUrl = URL("$projectUrl/rest/v1/profil_pengguna?email=$emailEncoded")
+        connection = (patchUrl.openConnection() as HttpURLConnection).apply {
+            requestMethod = "PATCH"
+            doOutput = true
+            setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
+            setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Prefer", "return=minimal")
+            connectTimeout = 30000
+            readTimeout = 30000
+        }
+        connection.outputStream.use { output ->
+            output.write("{\"profile_picture_url\":\"$urlGambar\"}".toByteArray(Charsets.UTF_8))
+        }
+        val kod = connection.responseCode
+        if (kod !in 200..299) {
+            val ralat = connection.errorStream?.bufferedReader()?.use { it.readText() }
+            android.util.Log.e("RuLaF_Profil", "Ralat PATCH: $kod - $ralat")
+        }
+        kod
+    } catch (e: Exception) {
+        android.util.Log.e("RuLaF_Profil", "Ralat PATCH: ${e.message}", e)
+        null
+    } finally {
+        connection?.disconnect()
     }
 }
 
@@ -1040,6 +1082,8 @@ fun DashboardScreen(
     var statusMesejMurid by remember { mutableStateOf<String?>(null) }
     var isLoadingMurid by remember { mutableStateOf(false) }
 
+    var profilePictureUrl by remember { mutableStateOf<String?>(null) }
+
     var filterDarjah by remember { mutableStateOf("Semua") }
     var filterTahap by remember { mutableStateOf("Semua") }
     var filterBulan by remember { mutableStateOf("Ogos 2026") }
@@ -1127,6 +1171,12 @@ fun DashboardScreen(
                 }
                 leaderboardDashboard = topPlayers.take(5)
             } catch (_: Exception) {}
+            try {
+                val profilGuru = withContext(Dispatchers.IO) {
+                    RetrofitClient.api.getUserProfile("eq.$userEmail")
+                }
+                profilePictureUrl = profilGuru.firstOrNull()?.profile_picture_url
+            } catch (_: Exception) {}
         } else {
             isLoadingMurid = true
             statusMesejMurid = null
@@ -1137,6 +1187,7 @@ fun DashboardScreen(
                 }
                 val myProfile = profiles.firstOrNull()
                 val userMyKid = myProfile?.mykid?.trim()
+                profilePictureUrl = myProfile?.profile_picture_url
 
                 if (!userMyKid.isNullOrEmpty()) {
                     val grades = withContext(Dispatchers.IO) {
@@ -1200,14 +1251,25 @@ fun DashboardScreen(
                             navController.navigate("profil")
                         }
                 ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = ArchBlue.copy(alpha = 0.15f),
-                        border = BorderStroke(1.5.dp, ArchBlue),
-                        modifier = Modifier.size(44.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(if (isGuru) "👨‍🏫" else "🧙‍♂️", fontSize = 22.sp)
+                    if (profilePictureUrl != null) {
+                        AsyncImage(
+                            model = profilePictureUrl,
+                            contentDescription = "Gambar Profil",
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Surface(
+                            shape = CircleShape,
+                            color = ArchBlue.copy(alpha = 0.15f),
+                            border = BorderStroke(1.5.dp, ArchBlue),
+                            modifier = Modifier.size(44.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(if (isGuru) "👨‍🏫" else "🧙‍♂️", fontSize = 22.sp)
+                            }
                         }
                     }
 
@@ -3390,23 +3452,19 @@ fun ProfilScreen(
                         try {
                             val urlBaru = muatNaikGambarProfilKeStoran(context, uri)
                             if (urlBaru != null) {
-                                val simpanan = withContext(Dispatchers.IO) {
-                                    RetrofitClient.api.updateProfilePictureUrl(
-                                        email = userEmail,
-                                        body = mapOf("profile_picture_url" to urlBaru)
-                                    )
-                                }
                                 profilePictureUrl = urlBaru
-                                if (simpanan.isSuccessful) {
+                                val kod = simpanPautanGambarProfil(email = userEmail, urlGambar = urlBaru)
+                                if (kod != null && kod in 200..299) {
                                     Toast.makeText(context, "✓ Gambar profil dikemas kini!", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    Toast.makeText(context, "Gambar dinaikkan, tetapi pautan gagal disimpan.", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, "Gambar dinaikkan, tetapi pautan gagal disimpan. (${kod ?: "ralat"})", Toast.LENGTH_LONG).show()
                                 }
                             } else {
                                 Toast.makeText(context, "Gagal memuat naik gambar. Sila cuba lagi.", Toast.LENGTH_LONG).show()
                             }
                         } catch (e: Exception) {
-                            Toast.makeText(context, "Ralat semasa memuat naik gambar.", Toast.LENGTH_LONG).show()
+                            android.util.Log.e("RuLaF_Profil", "Ralat semasa memuat naik gambar", e)
+                            Toast.makeText(context, "Ralat semasa memuat naik gambar. Sila cuba lagi.", Toast.LENGTH_LONG).show()
                         } finally {
                             isUploadingPicture = false
                         }
@@ -3471,7 +3529,7 @@ fun ProfilScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Profil",
+                    text = "Tetapan Profil",
                     fontWeight = FontWeight.Black,
                     fontSize = 22.sp,
                     color = MaterialTheme.colorScheme.onSurface
@@ -3510,7 +3568,7 @@ fun ProfilScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = "PROFIL & TETAPAN",
+                                    text = "Maklumat Murid",
                                     fontWeight = FontWeight.Black,
                                     fontSize = 13.sp,
                                     fontFamily = FontFamily.Monospace
@@ -3914,6 +3972,116 @@ fun ProfilScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        item {
+            var showAboutDialog by remember { mutableStateOf(false) }
+
+            if (showAboutDialog) {
+                AlertDialog(
+                    onDismissRequest = { showAboutDialog = false },
+                    title = { Text("RuLaFHub", fontWeight = FontWeight.Black) },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                "Versi ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = ArchBlue
+                            )
+                            Text(
+                                "RuLaF (Rutin Latihan Fleksibel) iaitu satu Rangka Kerja Pembelajaran Terbeza dan Pentaksiran Pelbagai Tahap dilahirkan daripada satu niat yang ringkas: membantu murid dan mengembalikan minat mereka terhadap pembelajaran, khususnya dalam penguasaan asas 3M (Membaca, Menulis, Mengira) dan literasi Jawi.\n" +
+                                        "\n" +
+                                        "RuLaFHub bertindak sebagai infrastruktur digital (seakan GitHub untuk pendidik). Ia adalah pusat pangkalan data komprehensif dan repositori kolaboratif yang membolehkan para pendidik memuat naik, berkongsi kod kuiz interaktif, menyelaraskan Bahan Bantu Mengajar (BBM), dan menjejak demografi murid.",
+                                fontSize = 12.sp
+                            )
+                            Text(
+                                "Hak cipta terpelihara © 2026 Akademi RuLaF.",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showAboutDialog = false }) {
+                            Text("OK", color = ArchBlue)
+                        }
+                    }
+                )
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                try {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://rulaf-web.vercel.app/privacy"))
+                                    )
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "Tiada pelayar web dijumpai.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PrivacyTip,
+                            contentDescription = "Privasi",
+                            tint = ArchBlue
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Dasar Privasi", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(
+                                "Baca cara data peribadi anda dilindungi.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = "Buka",
+                            tint = Color.Gray
+                        )
+                    }
+                    Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showAboutDialog = true }
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Info,
+                            contentDescription = "Perihal Aplikasi",
+                            tint = ArchBlue
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Perihal Aplikasi", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(
+                                "Versi ${BuildConfig.VERSION_NAME} • Maklumat aplikasi",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = "Buka",
+                            tint = Color.Gray
+                        )
                     }
                 }
             }

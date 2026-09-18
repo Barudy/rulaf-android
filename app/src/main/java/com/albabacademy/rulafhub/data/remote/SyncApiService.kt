@@ -379,21 +379,12 @@ interface SyncApiService {
     ): List<VersiAppDto>
 
     @Multipart
-    @POST("storage/v1/object/profile-pictures/{fileName}")
+    @POST("storage/v1/object/modul-rulaf/profil-pengguna/{fileName}")
     suspend fun uploadProfilePicture(
         @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
         @Part fileName: String,
         @Part("file") file: MultipartBody.Part
-    ): Response<Unit>
-
-    @Headers("Content-Type: application/json")
-    @PATCH("rest/v1/profil_pengguna?email=eq.{email}")
-    suspend fun updateProfilePictureUrl(
-        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
-        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
-        @Path("email") email: String,
-        @Body body: Map<String, String>
     ): Response<Unit>
 }
 
