@@ -39,7 +39,9 @@ data class StudentDto(
     val jantina: String,
     val kelas_id: String,
     val tahap: String? = "RuLaF Ba",
-    val no_tel: String? = ""
+    val no_tel: String? = "",
+    val merit: Int? = 0,
+    val demerit: Int? = 0
 )
 
 data class LeaderboardDto(
@@ -50,7 +52,14 @@ data class LeaderboardDto(
     val level_capai: Int,
     val jawapan_betul: Int,
     val jawapan_salah: Int,
-    val tarikh: String? = null
+    val tarikh: String? = null,
+    // Aggregated fields (from v_leaderboard_terkumpul view)
+    val total_skor: Int? = null,
+    val level_tertinggi: Int? = null,
+    val total_betul: Int? = null,
+    val total_salah: Int? = null,
+    val bilangan_sesi: Int? = null,
+    val tarikh_terkini: String? = null
 )
 
 data class UserProfileDto(
@@ -60,7 +69,35 @@ data class UserProfileDto(
     val jantina: String? = null,
     val peranan: String? = "Murid",
     val mykid: String? = null,
-    val profile_picture_url: String? = null
+    val profile_picture_url: String? = null,
+    val token_id: String? = null,
+    val kelas: String? = null,
+    val no_tel_ibu: String? = null,
+    val no_tel_bapa: String? = null
+)
+
+data class RulafVideoDto(
+    val id: Long? = null,
+    val tajuk_video: String = "",
+    val pautan_video: String = "",
+    val kategori: String? = "Jawi",
+    val pencipta: String? = "",
+    val is_aktif: Boolean = true,
+    val created_at: String? = null
+)
+
+data class RulafBoxEdaranDto(
+    val id: Long? = null,
+    val token_id: String? = "",
+    val mykid: String? = "",
+    val nama_murid: String? = "",
+    val bahan_bbm_id: Long? = null,
+    val bahan_bbm_tajuk: String? = "",
+    val tarikh_edaran: String? = null,
+    val status_siap_modul: Boolean = false,
+    val kaedah: String? = "nfc",
+    val diimbas_oleh: String? = "",
+    val created_at: String? = null
 )
 
 data class LoginBody(
@@ -225,12 +262,48 @@ interface SyncApiService {
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
     ): List<StudentDto>
 
+    @GET("rest/v1/data_murid")
+    suspend fun getStudentByMykid(
+        @Query("mykid") mykidQuery: String,
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
+    ): List<StudentDto>
+
     @GET("rest/v1/profil_pengguna")
     suspend fun getUserProfile(
         @Query("email") emailQuery: String,
         @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
     ): List<UserProfileDto>
+
+    @GET("rest/v1/profil_pengguna")
+    suspend fun getUserProfileByTokenId(
+        @Query("token_id") tokenQuery: String,
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
+    ): List<UserProfileDto>
+
+    @GET("rest/v1/rulaf_videos?select=*&is_aktif=eq.true&order=created_at.desc")
+    suspend fun getRulafVideos(
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
+    ): List<RulafVideoDto>
+
+    @Headers("Content-Type: application/json")
+    @POST("rest/v1/rulaf_videos")
+    suspend fun publishRulafVideo(
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Body body: RulafVideoDto
+    ): Response<Unit>
+
+    @Headers("Content-Type: application/json")
+    @POST("rest/v1/rulafbox_edaran")
+    suspend fun logRulafBoxEdaran(
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Body body: RulafBoxEdaranDto
+    ): Response<Unit>
 
     @POST("auth/v1/token?grant_type=password")
     suspend fun login(
@@ -265,6 +338,13 @@ interface SyncApiService {
     suspend fun getRekodKerajinanMurid(
         @Query("mykid") mykidQuery: String,
         @Query("order") order: String = "tarikh.asc",
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
+    ): List<RekodKerajinanDto>
+
+    @GET("rest/v1/rekod_kerajinan_harian")
+    suspend fun getRekodKehadiranHariIni(
+        @Query("tarikh") tarikhQuery: String,
         @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
     ): List<RekodKerajinanDto>
@@ -351,9 +431,16 @@ interface SyncApiService {
         @Body body: TambahForumRequest
     ): Response<Unit>
 
-    // Leaderboard RPG
+    // Leaderboard RPG - Individual entries (existing)
     @GET("rest/v1/rulaf_leaderboard?order=skor.desc&limit=10")
     suspend fun getLeaderboard(
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
+    ): List<LeaderboardDto>
+
+    // Leaderboard Terkumpul (Aggregated) - Carta Juara RuLaF
+    @GET("rest/v1/v_leaderboard_terkumpul?order=total_skor.desc&limit=10")
+    suspend fun getLeaderboardTerkumpul(
         @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
     ): List<LeaderboardDto>
@@ -371,6 +458,17 @@ interface SyncApiService {
         @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY"
     ): List<NotifikasiDto>
+
+    @Headers(
+        "Content-Type: application/json",
+        "Prefer: return=representation"
+    )
+    @POST("rest/v1/rulaf_notifikasi")
+    suspend fun createNotification(
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Body body: NotifikasiDto
+    ): Response<NotifikasiDto>
 
     @GET("rest/v1/rulaf_versi_app?id=eq.1&select=*")
     suspend fun getAppVersion(

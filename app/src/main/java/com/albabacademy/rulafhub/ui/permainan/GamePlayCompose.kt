@@ -507,7 +507,7 @@ fun RpgBattleScreen(
                 )
                 withContext(Dispatchers.IO) { RetrofitClient.api.hantarRekodKerajinan(body = kerajinanPayload) }
 
-                val lbData = withContext(Dispatchers.IO) { RetrofitClient.api.getLeaderboard() }
+                val lbData = withContext(Dispatchers.IO) { RetrofitClient.api.getLeaderboardTerkumpul() }
                 leaderboardList = lbData
                 Toast.makeText(context, "🏆 Kemenangan & Bonus Direkodkan!", Toast.LENGTH_SHORT).show()
             } catch (_: Exception) {}

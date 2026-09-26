@@ -25,8 +25,8 @@ android {
         applicationId = "com.albabacademy.rulafhub"
         minSdk = 26
         targetSdk = 36
-        versionCode = 21
-        versionName = "1.7.16-Experimental"
+        versionCode = 23
+        versionName = "1.7.21-Alpha"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -83,6 +83,15 @@ dependencies {
     // 🖼️ IMAGE LOADING
     implementation(libs.coil.compose)
     implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // 🎬 RVIDS - VIDEO PENDEK (VERTICAL FEED) & PEMUTAR MEDIA
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
+
+    // 📷 RBOX - PEMINDAI QR (FALLBACK NFC)
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    // 📷 QR CODE GENERATION (Native offline)
+    implementation("com.google.zxing:core:3.5.2")
 
     // 🔒 2. BIOMETRIC AUTHENTICATION
     implementation("androidx.biometric:biometric:1.1.0")
