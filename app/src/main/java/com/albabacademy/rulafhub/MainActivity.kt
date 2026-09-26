@@ -1,27 +1,25 @@
-@file:OptIn(
-    ExperimentalMaterial3Api::class,
-    ExperimentalLayoutApi::class
-)
 package com.albabacademy.rulafhub
 
 import android.app.PendingIntent
 import android.content.Context
-import android.content.ContextWrapper
+import android.content.ContentValues
 import android.content.Intent
-import android.content.IntentFilter
+import android.graphics.Bitmap
+import android.graphics.Bitmap.Config
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.net.Uri
-import android.nfc.NdefMessage
 import android.nfc.NdefRecord
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.Ndef
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -41,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -49,45 +48,45 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.navigation.NavHostController
-import coil.compose.AsyncImage
-import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.currentBackStackEntryAsState
+import coil.compose.AsyncImage
+import androidx.compose.foundation.Image
+
 import com.albabacademy.rulafhub.data.remote.*
 import com.albabacademy.rulafhub.utils.AuthHelper
 import com.albabacademy.rulafhub.utils.AuthHelper.findActivity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import retrofit2.Response
 import java.nio.charset.Charset
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.*
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.MultiFormatWriter
+import com.google.zxing.common.BitMatrix
 import android.provider.OpenableColumns
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
+import com.albabacademy.rulafhub.ui.RBox.RboxScreen
+import com.albabacademy.rulafhub.ui.Rvids.RvidsScreen
 import com.albabacademy.rulafhub.ui.components.KalendarKehadiranMurid
-import java.io.InputStream
+import com.albabacademy.rulafhub.ui.permainan.RuLaFGameEngineApp
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import kotlinx.coroutines.withContext
-
+import java.text.SimpleDateFormat
+import java.util.Date
 
 
 // =====================================================================
@@ -319,11 +318,11 @@ suspend fun muatNaikFailKeModulRulaf(
         if (connection.responseCode in 200..299) {
             "$projectUrl/storage/v1/object/public/modul-rulaf/$storagePath"
         } else {
-            android.util.Log.e("RuLaF_Storage", "Ralat Muat Naik HTTP: ${connection.responseCode}")
+            Log.e("RuLaF_Storage", "Ralat Muat Naik HTTP: ${connection.responseCode}")
             null
         }
     } catch (e: Exception) {
-        android.util.Log.e("RuLaF_Storage", "Ralat Sambungan: ${e.message}", e)
+        Log.e("RuLaF_Storage", "Ralat Sambungan: ${e.message}", e)
         null
     }
 }
@@ -363,11 +362,11 @@ suspend fun muatNaikGambarProfilKeStoran(
             "$projectUrl/storage/v1/object/public/modul-rulaf/$storagePath"
         } else {
             val ralat = connection.errorStream?.bufferedReader()?.use { it.readText() }
-            android.util.Log.e("RuLaF_Profil", "Ralat Muat Naik HTTP: ${connection.responseCode} - $ralat")
+            Log.e("RuLaF_Profil", "Ralat Muat Naik HTTP: ${connection.responseCode} - $ralat")
             null
         }
     } catch (e: Exception) {
-        android.util.Log.e("RuLaF_Profil", "Ralat Muat Naik: ${e.message}", e)
+        Log.e("RuLaF_Profil", "Ralat Muat Naik: ${e.message}", e)
         null
     } finally {
         connection?.disconnect()
@@ -400,14 +399,257 @@ suspend fun simpanPautanGambarProfil(
         val kod = connection.responseCode
         if (kod !in 200..299) {
             val ralat = connection.errorStream?.bufferedReader()?.use { it.readText() }
-            android.util.Log.e("RuLaF_Profil", "Ralat PATCH: $kod - $ralat")
+            Log.e("RuLaF_Profil", "Ralat PATCH: $kod - $ralat")
         }
         kod
     } catch (e: Exception) {
-        android.util.Log.e("RuLaF_Profil", "Ralat PATCH: ${e.message}", e)
+        Log.e("RuLaF_Profil", "Ralat PATCH: ${e.message}", e)
         null
     } finally {
         connection?.disconnect()
+    }
+}
+
+// 🔔 Hantar notifikasi demerit ke rulaf_notifikasi (Supabase)
+suspend fun hantarNotifikasiDemerit(
+    mykid: String,
+    namaMurid: String,
+    sebab: String,
+    guruEmail: String
+): Boolean = withContext(Dispatchers.IO) {
+    val projectUrl = "https://pzktjmtmkuicsjjjezjb.supabase.co"
+    val notifUrl = URL("$projectUrl/rest/v1/rulaf_notifikasi")
+    val connection = (notifUrl.openConnection() as HttpURLConnection).apply {
+        requestMethod = "POST"
+        doOutput = true
+        setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
+        setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+        setRequestProperty("Content-Type", "application/json")
+        setRequestProperty("Prefer", "return=representation")
+        connectTimeout = 30000
+        readTimeout = 30000
+    }
+    try {
+        val jsonBody = """
+            {
+                "tajuk": "Penolakan Merit",
+                "mesej": "Murid $namaMurid ($mykid) menerima 1 demerit: $sebab",
+                "kategori": "demerit",
+                "sasaran": "murid",
+                "pautan_tindakan": "",
+                "is_aktif": true
+            }
+        """.trimIndent()
+        connection.outputStream.use { output ->
+            output.write(jsonBody.toByteArray(Charsets.UTF_8))
+        }
+        val kod = connection.responseCode
+        if (kod !in 200..299) {
+            val ralat = connection.errorStream?.bufferedReader()?.use { it.readText() }
+            Log.e("RuLaF_Demerit", "Gagal hantar notifikasi: $kod - $ralat")
+            false
+        } else {
+            true
+        }
+    } catch (e: Exception) {
+        Log.e("RuLaF_Demerit", "Ralat hantar notifikasi: ${e.message}", e)
+        false
+    } finally {
+        connection?.disconnect()
+    }
+}
+
+// 🎲 Jana token rawak dengan format RULAF-SEC-XXXXXX
+fun janaTokenNfc(): String {
+    val chars = "ABCDEF1234567890"
+    val rawak = (1..6).map { chars.random() }.joinToString("")
+    return "RULAF-SEC-$rawak"
+}
+
+// 🔐 Simpan token NFC (token_id) ke profil_pengguna (PATCH/UPDATE)
+suspend fun simpanTokenNfc(
+    email: String,
+    tokenId: String
+): Int? = withContext(Dispatchers.IO) {
+    val projectUrl = "https://pzktjmtmkuicsjjjezjb.supabase.co"
+    val emailEncoded = URLEncoder.encode("eq.$email", "UTF-8")
+    var connection: HttpURLConnection? = null
+    try {
+        val patchUrl = URL("$projectUrl/rest/v1/profil_pengguna?email=$emailEncoded")
+        connection = (patchUrl.openConnection() as HttpURLConnection).apply {
+            requestMethod = "PATCH"
+            doOutput = true
+            setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
+            setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Prefer", "return=minimal")
+            connectTimeout = 30000
+            readTimeout = 30000
+        }
+        connection.outputStream.use { output ->
+            output.write("{\"token_id\":\"$tokenId\"}".toByteArray(Charsets.UTF_8))
+        }
+        val kod = connection.responseCode
+        if (kod !in 200..299) {
+            val ralat = connection.errorStream?.bufferedReader()?.use { it.readText() }
+            Log.e("RuLaF_Profil", "Ralat PATCH Token: $kod - $ralat")
+        }
+        kod
+    } catch (e: Exception) {
+        Log.e("RuLaF_Profil", "Ralat PATCH Token: ${e.message}", e)
+        null
+    } finally {
+        connection?.disconnect()
+    }
+}
+
+// 📷 QR CODE GENERATOR (Offline, Native ZXing)
+// Menghasilkan QR bitmap dari string token (plain text, no URL wrapper)
+fun generateQrBitmap(token: String, size: Int = 512): Bitmap {
+    val writer = MultiFormatWriter()
+    val bitMatrix: BitMatrix = writer.encode(token, BarcodeFormat.QR_CODE, size, size)
+    val bitmap = Bitmap.createBitmap(size, size, Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    canvas.drawColor(android.graphics.Color.WHITE)
+    val paint = Paint()
+    paint.color = android.graphics.Color.BLACK
+    for (x in 0 until size) {
+        for (y in 0 until size) {
+            if (bitMatrix[x, y]) {
+                canvas.drawPoint(x.toFloat(), y.toFloat(), paint)
+            }
+        }
+    }
+    return bitmap
+}
+
+// Simpan QR ke MediaStore (Galeri) & kembalikan Uri
+suspend fun saveQrToGallery(context: Context, token: String, fileName: String = "RulafToken_${System.currentTimeMillis()}.png"): Uri? = withContext(Dispatchers.IO) {
+    try {
+        val bitmap = generateQrBitmap(token)
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/RuLaFHub")
+            }
+        }
+        val resolver = context.contentResolver
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues) ?: return@withContext null
+        resolver.openOutputStream(uri)?.use { outputStream ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+        }
+        uri
+    } catch (e: Exception) {
+        null
+    }
+}
+
+@Composable
+fun TokenQrDisplay(
+    token: String,
+    onSaved: (Uri) -> Unit,
+    onError: (String) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var isSaving by remember { mutableStateOf(false) }
+
+    LaunchedEffect(token) {
+        qrBitmap = generateQrBitmap(token, 400)
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        qrBitmap?.let { bitmap ->
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "QR Kod Token: $token",
+                modifier = Modifier.size(200.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = token,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace,
+            color = ArchBlue
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = {
+                    if (!isSaving) {
+                        isSaving = true
+                        scope.launch {
+                            val uri = saveQrToGallery(context, token)
+                            if (uri != null) {
+                                onSaved(uri)
+                            } else {
+                                onError("Tidak dapat menyimpan ke galeri")
+                            }
+                            isSaving = false
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = ArchBlue),
+                shape = RoundedCornerShape(4.dp),
+                enabled = !isSaving
+            ) {
+                Text(
+                    text = if (isSaving) "MENYIMPAN..." else "💾 Simpan ke Galeri",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp
+                )
+            }
+
+            Button(
+                onClick = {
+                    if (!isSaving && qrBitmap != null) {
+                        isSaving = true
+                        scope.launch {
+                            try {
+                                val uri = saveQrToGallery(context, token)
+                                if (uri != null) {
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "image/png"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "Kongsi QR Kod"))
+                                } else {
+                                    onError("Gagal menyediakan untuk dikongsi")
+                                }
+                            } catch (e: Exception) {
+                                onError(e.message ?: "Ralat tidak diketahui")
+                            }
+                            isSaving = false
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = SystemGreen),
+                shape = RoundedCornerShape(4.dp),
+                enabled = !isSaving
+            ) {
+                Text(
+                    text = if (isSaving) "MENYEDIAKAN..." else "📤 Kongsi",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp
+                )
+            }
+        }
     }
 }
 
@@ -480,6 +722,7 @@ class MainActivity : FragmentActivity() {
     private var pendingIntent: PendingIntent? = null
 
     var lastScannedMyKid by mutableStateOf<String?>(null)
+    var lastScannedToken by mutableStateOf<String?>(null)
     var showNfcActionSheet by mutableStateOf(false)
     var studentListForNfc by mutableStateOf<List<StudentDto>>(emptyList())
     var lastScannedPhone by mutableStateOf<String?>(null)
@@ -547,7 +790,7 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val context = LocalContext.current
-            val sharedPrefs = remember { context.getSharedPreferences("RuLaF_Prefs", Context.MODE_PRIVATE) }
+            val sharedPrefs = remember { context.getSharedPreferences("RuLaF_Prefs", MODE_PRIVATE) }
 
             var themeMode by remember { mutableStateOf(sharedPrefs.getString("theme_mode", "system") ?: "system") }
             val isDarkMode = when (themeMode) {
@@ -839,7 +1082,7 @@ fun MainAppShell(
                 )
             }
             composable("arked") {
-                com.albabacademy.rulafhub.ui.permainan.RuLaFGameEngineApp(
+                RuLaFGameEngineApp(
                     userRole = userRole,
                     userEmail = userEmail,
                     userMyKid = currentUserMyKid,
@@ -851,6 +1094,20 @@ fun MainAppShell(
             // 🔑 DIBAIKI: Dwi-panggilan RepositoryScreen dipadamkan
             composable("repositori") {
                 RepositoryScreen(userRole = userRole, userEmail = userEmail)
+            }
+            // 🎬 RVIDS - suapan video pendek (murid & guru)
+            composable("rvids") {
+                RvidsScreen(
+                    userRole = userRole,
+                    userEmail = userEmail
+                )
+            }
+            // 📦 RBOX - NFC token / QR (khas guru/admin)
+            composable("rbox") {
+                RboxScreen(
+                    userRole = userRole,
+                    userEmail = userEmail
+                )
             }
             composable("forum") {
                 ForumScreen(userRole, userEmail)
@@ -885,18 +1142,18 @@ fun RuLaFBottomNavigationBar(navController: NavHostController, userRole: String)
     val items = if (isMurid) {
         listOf(
             BottomNavItem("Prestasi", "dashboard", Icons.Filled.Assessment),
-            BottomNavItem("Permainan", "arked", Icons.Filled.PlayArrow),
+            BottomNavItem("Permainan", "arked", Icons.Filled.Games),
+            BottomNavItem("Rvids", "rvids", Icons.Filled.PlayCircle),
             BottomNavItem("Repo BBM", "repositori", Icons.Filled.FolderShared),
-            BottomNavItem("Forum", "forum", Icons.Filled.Forum),
-            BottomNavItem("Profil", "profil", Icons.Filled.Person)
+            BottomNavItem("Forum", "forum", Icons.Filled.Forum)
         )
     } else {
         listOf(
             BottomNavItem("Dashboard", "dashboard", Icons.Filled.Home),
-            BottomNavItem("Permainan", "arked", Icons.Filled.PlayArrow),
+            BottomNavItem("RBox", "rbox", Icons.Filled.QrCodeScanner),
+            BottomNavItem("Rvids", "rvids", Icons.Filled.PlayCircle),
             BottomNavItem("Repo BBM", "repositori", Icons.Filled.FolderShared),
-            BottomNavItem("Forum", "forum", Icons.Filled.Forum),
-            BottomNavItem("Profil", "profil", Icons.Filled.Person)
+            BottomNavItem("Forum", "forum", Icons.Filled.Forum)
         )
     }
 
@@ -1056,7 +1313,7 @@ fun InAppNoticeBanner(
 // =====================================================================
 // 📊 DASHBOARD SCREEN
 // =====================================================================
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     userRole: String,
@@ -1089,7 +1346,7 @@ fun DashboardScreen(
     var filterBulan by remember { mutableStateOf("Ogos 2026") }
 
     val tarikhHariIni = remember {
-        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
     }
 
     val filteredStudents = studentList.filter { student ->
@@ -1132,7 +1389,7 @@ fun DashboardScreen(
             }
             senaraiNotifikasi = notis.filter { it.is_aktif }
         } catch (e: Exception) {
-            android.util.Log.e("RuLaF_Notis", "Ralat tarik notifikasi: ${e.message}", e)
+            Log.e("RuLaF_Notis", "Ralat tarik notifikasi: ${e.message}", e)
         }
     }
 
@@ -2358,8 +2615,8 @@ fun RepositoryScreen(userRole: String, userEmail: String = "Guru") {
     var isUploadingFileToStorage by remember { mutableStateOf(false) }
 
     // 📂 Pengurus Pemilihan Fail Dari Telefon
-    val filePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
             scope.launch {
@@ -3403,6 +3660,8 @@ fun ProfilScreen(
     var isPetiSimpananExpanded by rememberSaveable { mutableStateOf(false) }
 
     var profilePictureUrl by remember { mutableStateOf<String?>(null) }
+    var profileToken by remember { mutableStateOf<String?>(null) }
+    var isGeneratingToken by remember { mutableStateOf(false) }
     var showProfilePictureDialog by remember { mutableStateOf(false) }
     var isUploadingPicture by remember { mutableStateOf(false) }
     var showEditProfileDialog by remember { mutableStateOf(false) }
@@ -3425,6 +3684,7 @@ fun ProfilScreen(
                 profileRole = userRecord.peranan ?: userRole
                 profileMyKid = userRecord.mykid ?: ""
                 profilePictureUrl = userRecord.profile_picture_url
+                profileToken = userRecord.token_id
             } else {
                 profileLoadError = "Maklumat pengguna tiada dalam pangkalan data. Sila simpan untuk mendaftar."
             }
@@ -3443,8 +3703,8 @@ fun ProfilScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            val profilPicturePicker = androidx.activity.compose.rememberLauncherForActivityResult(
-                contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+            val profilPicturePicker = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.GetContent()
             ) { uri: Uri? ->
                 if (uri != null) {
                     scope.launch {
@@ -3463,7 +3723,7 @@ fun ProfilScreen(
                                 Toast.makeText(context, "Gagal memuat naik gambar. Sila cuba lagi.", Toast.LENGTH_LONG).show()
                             }
                         } catch (e: Exception) {
-                            android.util.Log.e("RuLaF_Profil", "Ralat semasa memuat naik gambar", e)
+                            Log.e("RuLaF_Profil", "Ralat semasa memuat naik gambar", e)
                             Toast.makeText(context, "Ralat semasa memuat naik gambar. Sila cuba lagi.", Toast.LENGTH_LONG).show()
                         } finally {
                             isUploadingPicture = false
@@ -3568,7 +3828,7 @@ fun ProfilScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = "Maklumat Murid",
+                                    text = "Maklumat Pengguna",
                                     fontWeight = FontWeight.Black,
                                     fontSize = 13.sp,
                                     fontFamily = FontFamily.Monospace
@@ -3743,33 +4003,228 @@ fun ProfilScreen(
                             )
                         }
 
+                        // 🏆 MERIT & DEMERIT CARD (hanya untuk Murid) - Diletakkan di atas Token Kad NFC
                         if (isMurid) {
-                            Spacer(modifier = Modifier.height(20.dp))
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(containerColor = SystemGreen.copy(alpha = 0.08f)),
-                                border = BorderStroke(1.dp, SystemGreen),
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text("[ AKSES MURID ]", color = SystemGreen, fontWeight = FontWeight.Bold, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        "Lihat prestasi formatif, pencapaian gamifikasi, dan sejarah semakan markah Jawi terkini anda di sini.",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Button(
-                                        onClick = onNavigateToSemakan,
-                                        colors = ButtonDefaults.buttonColors(containerColor = SystemGreen),
-                                        shape = RoundedCornerShape(4.dp)
-                                    ) {
-                                        Text("Semak Markah Saya", fontSize = 11.sp)
+
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
+                                    border = BorderStroke(1.dp, SystemGreen),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.EmojiEvents,
+                                                contentDescription = "Merit & Demerit",
+                                                tint = SystemGreen,
+                                                modifier = Modifier.size(28.dp)
+                                            )
+                                            Column {
+                                                Text(
+                                                    "MERIT & DEMERIT",
+                                                    fontWeight = FontWeight.Black,
+                                                    fontSize = 13.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = SystemGreen
+                                                )
+                                                Text(
+                                                    "Jumlah merit & demerit yang terkumpul",
+                                                    fontSize = 10.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                                    fontFamily = FontFamily.Monospace
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(16.dp))
+
+                                        // Merit & Demerit Stats
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceEvenly
+                                        ) {
+                                            // Merit
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(12.dp)
+                                                    .background(Color.White, RoundedCornerShape(8.dp))
+                                                    .padding(12.dp),
+                                                horizontalAlignment = Alignment.CenterHorizontally
+                                            ) {
+                                                Text("✅ MERIT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = SystemGreen, fontFamily = FontFamily.Monospace)
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text("0", fontSize = 28.sp, fontWeight = FontWeight.Black, color = SystemGreen)
+                                                Text("Mata", fontSize = 10.sp, color = Color.Gray)
+                                            }
+
+                                            // Demerit
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(12.dp)
+                                                    .background(Color.White, RoundedCornerShape(8.dp))
+                                                    .padding(12.dp),
+                                                horizontalAlignment = Alignment.CenterHorizontally
+                                            ) {
+                                                Text("⚠️ DEMERIT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEF4444), fontFamily = FontFamily.Monospace)
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text("0", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color(0xFFEF4444))
+                                                Text("Mata", fontSize = 10.sp, color = Color.Gray)
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(12.dp))
+
+                                        // Progress bar for merit level
+                                        Column {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("Tahap Merit: Pemula", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = ArchBlue)
+                                                Text("0 / 50 mata", fontSize = 10.sp, color = Color.Gray)
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            LinearProgressIndicator(
+                                                progress = 0f,
+                                                modifier = Modifier.fillMaxWidth(),
+                                                color = SystemGreen,
+                                                trackColor = Color.LightGray
+                                            )
+                                        }
                                     }
                                 }
                             }
-                        }
+
+
+                        // 🔐 TOKEN KAD NFC (RBox) - Diletakkan di bawah Merit & Demerit
+
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(
+                                        "🔐 Token Kad NFC (RBox)",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 13.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = ArchBlue
+                                    )
+                                    Text(
+                                        "Token rawak ini boleh dirakam pada kad NFC / kod QR. Tiada MyKid atau nombor telefon pada kad - privasi dilindungi.",
+                                        fontSize = 11.sp,
+                                        lineHeight = 15.sp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    Surface(
+                                        color = SystemGreen.copy(alpha = 0.08f),
+                                        shape = RoundedCornerShape(6.dp),
+                                        border = BorderStroke(1.dp, SystemGreen.copy(alpha = 0.4f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Text(
+                                                text = "TOKEN KESELAMATAN AKTIF:",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = SystemGreen,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = profileToken ?: "Memuatkan token...",
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.Black,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = SystemGreen
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    val hasToken = !profileToken.isNullOrBlank()
+
+                                    Button(
+                                        onClick = {
+                                            // Keselamatan tambahan: Hanya benarkan jika belum ada token
+                                            if (!hasToken) {
+                                                scope.launch {
+                                                    isGeneratingToken = true
+                                                    val token = janaTokenNfc()
+                                                    val kod = simpanTokenNfc(email = userEmail, tokenId = token)
+                                                    if (kod != null && kod in 200..299) {
+                                                        profileToken = token
+                                                        Toast.makeText(context, "✓ Token NFC berjaya direkod!", Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        Toast.makeText(context, "Gagal menyimpan token. (${kod ?: "ralat"})", Toast.LENGTH_LONG).show()
+                                                    }
+                                                    isGeneratingToken = false
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (hasToken) Color.Gray.copy(alpha = 0.5f) else ArchBlue
+                                        ),
+                                        shape = RoundedCornerShape(4.dp),
+                                        // 🛑 KUNCI UTAMA: Butang dilumpuhkan jika sedang loading ATAU jika token sudah wujud!
+                                        enabled = !isGeneratingToken && !hasToken
+                                    ) {
+                                        Text(
+                                            text = when {
+                                                hasToken -> "🔒 Token Telah Dijana & Dikunci"
+                                                isGeneratingToken -> "Menjana Token Keselamatan..."
+                                                else -> "Jana / Rekod Token Baru"
+                                            },
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+
+                                    // Amaran mesra pengguna jika token sudah wujud
+                                    if (hasToken) {
+                                        Text(
+                                            text = "⚠️ Kamu sudah generate dan tidak boleh generate lagi. Token ini kekal untuk melindungi kad NFC dan kod QR anda.",
+                                            fontSize = 10.sp,
+                                            color = Color.Red,
+                                            modifier = Modifier.padding(top = 6.dp),
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+
+                                    // 📷 QR CODE GENERATOR & EXPORT
+                                    if (hasToken) {
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Divider(color = Color.Gray.copy(alpha = 0.3f))
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Text(
+                                            "📷 Kod QR Token (Untuk Cetak Kad)",
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = ArchBlue
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        TokenQrDisplay(token = profileToken!!, onSaved = { uri ->
+                                            Toast.makeText(context, "✓ QR disimpan ke Galeri: $uri", Toast.LENGTH_SHORT).show()
+                                        }, onError = { msg ->
+                                            Toast.makeText(context, "Gagal simpan QR: $msg", Toast.LENGTH_SHORT).show()
+                                        })
+                                    }
+                                }
+                            }
+
                         }
                     }
                 }
@@ -4087,6 +4542,63 @@ fun ProfilScreen(
             }
         }
 
+        // 💛 SOKONG RULAFHUB CARD - Visible to ALL users (Admin, Guru, Murid)
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+                border = BorderStroke(1.dp, Color(0xFFFFB74D)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Favorite,
+                            contentDescription = "Sokongan",
+                            tint = Color(0xFFFF8F00),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Column {
+                            Text(
+                                "Sokong RuLaFHub",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 13.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color(0xFFE65100)
+                            )
+                            Text(
+                                "Bantu kami menyediakan kad NFC & infrastruktur Supabase. Sasaran: RM 100.",
+                                fontSize = 10.sp,
+                                color = Color(0xFF5D4037),
+                                lineHeight = 14.sp
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://rulaf-web.vercel.app/dana"))
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF8F00)),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            "💛 Sumbang Sekarang",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        }
+
         item {
             Button(
                 onClick = onLogout,
@@ -4147,7 +4659,7 @@ fun BackRow(name: String, onClick: () -> Unit) {
 data class BottomNavItem(
     val title: String,
     val route: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector
+    val icon: ImageVector
 )
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -4346,10 +4858,10 @@ fun NfcActionBottomSheet(
                         isSending = true
                         scope.launch {
                             try {
-                                val tarikhHariIni = java.text.SimpleDateFormat(
+                                val tarikhHariIni = SimpleDateFormat(
                                     "yyyy-MM-dd",
-                                    java.util.Locale.getDefault()
-                                ).format(java.util.Date())
+                                    Locale.getDefault()
+                                ).format(Date())
 
                                 // Rekod hadir sahaja (tugasan 0 dahulu)
                                 val payload = HantarKerajinanRequest(
@@ -4411,10 +4923,10 @@ fun NfcActionBottomSheet(
                         isSending = true
                         scope.launch {
                             try {
-                                val tarikhHariIni = java.text.SimpleDateFormat(
+                                val tarikhHariIni = SimpleDateFormat(
                                     "yyyy-MM-dd",
-                                    java.util.Locale.getDefault()
-                                ).format(java.util.Date())
+                                    Locale.getDefault()
+                                ).format(Date())
 
                                 val ringkasanSubjek = if (subjekSelesaiSet.isNotEmpty()) {
                                     subjekSelesaiSet.joinToString(", ")
@@ -4599,12 +5111,12 @@ fun KerajinanHeatmapCompose(
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             // Kita tunjukkan 7 slot terakhir
-            val calendar = java.util.Calendar.getInstance()
-            val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+            val calendar = Calendar.getInstance()
+            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             
             val last7Days = (0..6).map { i ->
-                val cal = java.util.Calendar.getInstance()
-                cal.add(java.util.Calendar.DAY_OF_YEAR, -i)
+                val cal = Calendar.getInstance()
+                cal.add(Calendar.DAY_OF_YEAR, -i)
                 dateFormat.format(cal.time)
             }.reversed()
 
