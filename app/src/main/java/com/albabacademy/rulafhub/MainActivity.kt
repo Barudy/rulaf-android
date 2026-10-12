@@ -3315,6 +3315,87 @@ fun ForumScreen(userRole: String, userEmail: String) {
     var dialogKeterangan by remember { mutableStateOf("") }
     var dialogKategori by remember { mutableStateOf("QNA") }
     var isPostingThread by remember { mutableStateOf(false) }
+    var threadStatus by remember { mutableStateOf<String>("buka") }
+    var acceptedCommentId by remember { mutableStateOf<Int?>(null) }
+    var isLoadingThread by remember { mutableStateOf(false) }
+
+    // 🔒 Sahkan & Tutup Thread (Guru/Admin only)
+    fun sahkanDanTutupThread(comment: CommentDto, thread: ForumDto) {
+        if (comment.id == null) {
+            Toast.makeText(context, "Rekod lama — jalankan migrasi terlebih dahulu", Toast.LENGTH_SHORT).show()
+            return
+        }
+        scope.launch {
+            try {
+                val commentRes = withContext(Dispatchers.IO) {
+                    RetrofitClient.api.updateCommentDiterima(
+                        commentId = comment.id!!,
+                        body = CommentDiterimaUpdate(diterima = true)
+                    )
+                    if (!commentRes.isSuccessful) {
+                        Toast.makeText(context, "Gagal mengesahkan komen: ${commentRes.code()}", Toast.LENGTH_SHORT).show()
+                        return
+                    }
+                    val forumRes = withContext(Dispatchers.IO) {
+                        RetrofitClient.api.updateForumStatus(
+                            forumId = thread.id,
+                            body = ForumStatusUpdate(status = "tutup", jawapan_id = comment.id)
+                        )
+                    }
+                    if (!forumRes.isSuccessful) {
+                        Toast.makeText(context, "Gagal menutup thread: ${forumRes.code()}", Toast.LENGTH_SHORT).show()
+                        return
+                    }
+                    acceptedCommentId = comment.id
+                    threadStatus = "tutup"
+                    val updatedComments = withContext(Dispatchers.IO) {
+                        RetrofitClient.api.getComments("eq.${selectedThread!!.id}")
+                    }
+                    commentList = updatedComments
+                    Toast.makeText(context, "✓ Komen disahkan & thread ditutup!", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Ralat: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        fun bukaSemulaThread(thread: ForumDto) {
+            scope.launch {
+                try {
+                    if (acceptedCommentId != null) {
+                        val commentRes = withContext(Dispatchers.IO) {
+                            RetrofitClient.api.updateCommentDiterima(
+                                commentId = acceptedCommentId!!,
+                                body = CommentDiterimaUpdate(diterima = false)
+                            )
+                        }
+                        if (!commentRes.isSuccessful) {
+                            Toast.makeText(context, "Gagal membuka semula: ${commentRes.code()}", Toast.LENGTH_SHORT).show()
+                            return
+                        }
+                    }
+                    val forumRes = withContext(Dispatchers.IO) {
+                        RetrofitClient.api.updateForumStatus(
+                            forumId = thread.id,
+                            body = ForumStatusUpdate(status = "buka", jawapan_id = null)
+                        )
+                    }
+                    if (!forumRes.isSuccessful) {
+                        Toast.makeText(context, "Gagal membuka semula thread: ${forumRes.code()}", Toast.LENGTH_SHORT).show()
+                        return
+                    }
+                    acceptedCommentId = null
+                    threadStatus = "buka"
+                    val updatedComments = withContext(Dispatchers.IO) {
+                        RetrofitClient.api.getComments("eq.${selectedThread!!.id}")
+                    }
+                    commentList = updatedComments
+                    Toast.makeText(context, "🔓 Thread dibuka semula!", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Ralat: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
 
     fun muatForumData() {
         scope.launch {
@@ -3346,7 +3427,32 @@ fun ForumScreen(userRole: String, userEmail: String) {
                 commentList = emptyList()
             }
         }
+
     }
+
+    LaunchedEffect(selectedThread) {
+        if (selectedThread != null) {
+            isLoadingThread = true
+            scope.launch {
+                try {
+                    val thread = withContext(Dispatchers.IO) {
+                        RetrofitClient.api.getForumThreads()
+                            .firstOrNull { it.id == selectedThread!!.id }
+                    }
+                    if (thread != null) {
+                        threadStatus = thread.status ?: "buka"
+                        acceptedCommentId = thread.jawapan_id
+                    }
+                } catch (e: Exception) {
+                    threadStatus = "buka"
+                    acceptedCommentId = null
+                } finally {
+                    isLoadingThread = false
+                }
+            }
+        }
+    }
+
 
     Scaffold(
         floatingActionButton = {
@@ -3400,6 +3506,7 @@ fun ForumScreen(userRole: String, userEmail: String) {
                             showDialogTambah = true
                         },
                     colors = CardDefaults.cardColors(containerColor = ArchOrange.copy(alpha = 0.08f))
+
                 ) {
                     Row(
                         modifier = Modifier.padding(14.dp),
@@ -3471,10 +3578,65 @@ fun ForumScreen(userRole: String, userEmail: String) {
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
-                        Text(thread.penulis, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
-                        Text(thread.tajuk, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(thread.penulis, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                                Text(thread.tajuk, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
+                            }
+                            // Status badge
+                            if (isLoadingThread) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                val isTutup = threadStatus == "tutup"
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        color = if (isTutup) Color(0xFFEF4444).copy(alpha = 0.15f) else SystemGreen.copy(alpha = 0.15f),
+                                        shape = RoundedCornerShape(20.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isTutup) Icons.Filled.Lock else Icons.Filled.CheckCircle,
+                                                contentDescription = if (isTutup) "Tutup" else "Buka",
+                                                tint = if (isTutup) Color(0xFFEF4444) else SystemGreen
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = if (isTutup) "🔒 Tutup — Jawapan Disahkan" else "🟢 Buka",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isTutup) Color(0xFFEF4444) else SystemGreen,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(thread.soalan, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+
+                        // 🔓 Buka Semula button (Guru/Admin only, visible when thread is tutup)
+                        if (threadStatus == "tutup" && isGuru) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = { bukaSemulaThread(thread) },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = SystemGreen),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("🔓 Buka Semula Thread", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color.White)
+                            }
+                        }
                     }
                 }
 
@@ -3486,18 +3648,72 @@ fun ForumScreen(userRole: String, userEmail: String) {
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+
                     items(commentList) { comment ->
+                        val isAccepted = comment.id != null && comment.id == acceptedCommentId
+                        val isGuruOrAdmin = userRole.equals("Guru", ignoreCase = true) || userRole.equals("Admin", ignoreCase = true)
+                        val canApprove = isGuruOrAdmin && !comment.diterima && threadStatus == "buka" && comment.id != null
+
                         Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(if (isAccepted) SystemGreen.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surface),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isAccepted) SystemGreen.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surface
+                            ),
+                            border = if (isAccepted) BorderStroke(1.dp, SystemGreen) else null
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
-                                Text(comment.penulis, fontWeight = FontWeight.Bold, fontSize = 10.sp, color = ArchOrange)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        comment.penulis,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = ArchOrange
+                                    )
+                                    if (isAccepted) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.CheckCircle,
+                                                contentDescription = "Disahkan",
+                                                tint = SystemGreen,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Text(
+                                                "Disahkan",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = SystemGreen,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
+                                    }
+                                }
+
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(comment.komen, fontSize = 12.sp)
+
+                                // 🔒 Sahkan & Tutup button (Guru/Admin only, only on buka threads, not already accepted)
+                                if (canApprove) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Button(
+                                        onClick = { sahkanDanTutupThread(comment, thread) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = SystemGreen),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text("✓ Sahkan & Tutup", fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White)
+                                    }
+
+                                }
                             }
-                        }
-                    }
                 }
 
                 Row(

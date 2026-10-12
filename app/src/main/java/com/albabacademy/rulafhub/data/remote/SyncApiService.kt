@@ -83,7 +83,13 @@ data class RulafVideoDto(
     val kategori: String? = "Jawi",
     val pencipta: String? = "",
     val is_aktif: Boolean = true,
-    val created_at: String? = null
+    val created_at: String? = null,
+    // Extended fields for social features
+    val views: Int? = 0,
+    val likes: Int? = 0,
+    val shares: Int? = 0,
+    val pencipta_profile_url: String? = null,
+    val pencipta_nama: String? = null
 )
 
 data class RulafBoxEdaranDto(
@@ -167,7 +173,11 @@ data class ForumDto(
     val soalan: String,
     val penulis: String,
     val kategori: String? = null,
-    val tarikh: String? = null
+    val tarikh: String? = null,
+    val status: String? = "buka",
+    val jawapan_id: Int? = null,
+    val penulis_profile_url: String? = null,
+    val penulis_nama: String? = null
 )
 
 data class CommentDto(
@@ -175,7 +185,20 @@ data class CommentDto(
     val forum_id: Int,
     val komen: String,
     val penulis: String,
-    val tarikh: String? = null
+    val tarikh: String? = null,
+    val diterima: Boolean = false,
+    val penulis_profile_url: String? = null,
+    val penulis_nama: String? = null
+)
+
+// Request/Response DTOs for forum actions
+data class ForumStatusUpdate(
+    val status: String, // "buka" atau "tutup"
+    val jawapan_id: Int? = null
+)
+
+data class CommentDiterimaUpdate(
+    val diterima: Boolean
 )
 
 data class SupabaseGradeDto(
@@ -429,6 +452,122 @@ interface SyncApiService {
         @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
         @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
         @Body body: TambahForumRequest
+    ): Response<Unit>
+
+    // Forum status update (tutup/buka) & jawapan_id
+    data class ForumStatusUpdate(
+        val status: String, // "buka" atau "tutup"
+        val jawapan_id: Int? = null
+    )
+
+    @Headers("Content-Type: application/json")
+    @PATCH("rest/v1/rulaf_forum?id=eq.{forumId}")
+    suspend fun updateForumStatus(
+        @Path("forumId") forumId: Int,
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Body body: ForumStatusUpdate
+    ): Response<Unit>
+
+    // Comment diterima update
+    data class CommentDiterimaUpdate(
+        val diterima: Boolean
+    )
+
+    @Headers("Content-Type: application/json")
+    @PATCH("rest/v1/rulaf_komen?id=eq.{commentId}")
+    suspend fun updateCommentDiterima(
+        @Path("commentId") commentId: Int,
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Body body: CommentDiterimaUpdate
+    ): Response<Unit>
+
+    // Forum status update (tutup/buka) & jawapan_id
+    data class ForumStatusUpdate(
+        val status: String, // "buka" atau "tutup"
+        val jawapan_id: Int? = null
+    )
+
+    @Headers("Content-Type: application/json")
+    @PATCH("rest/v1/rulaf_forum?id=eq.{forumId}")
+    suspend fun updateForumStatus(
+        @Path("forumId") forumId: Int,
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Body body: ForumStatusUpdate
+    ): Response<Unit>
+
+    // Comment diterima update
+    data class CommentDiterimaUpdate(
+        val diterima: Boolean
+    )
+
+    @Headers("Content-Type: application/json")
+    @PATCH("rest/v1/rulaf_komen?id=eq.{commentId}")
+    suspend fun updateCommentDiterima(
+        @Path("commentId") commentId: Int,
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Body body: CommentDiterimaUpdate
+    ): Response<Unit>
+
+    // Forum status update (tutup/buka) & jawapan_id
+    data class ForumStatusUpdate(
+        val status: String, // "buka" atau "tutup"
+        val jawapan_id: Int? = null
+    )
+
+    @Headers("Content-Type: application/json")
+    @PATCH("rest/v1/rulaf_forum?id=eq.{forumId}")
+    suspend fun updateForumStatus(
+        @Path("forumId") forumId: Int,
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Body body: ForumStatusUpdate
+    ): Response<Unit>
+
+    // Comment diterima update
+    data class CommentDiterimaUpdate(
+        val diterima: Boolean
+    )
+
+    @Headers("Content-Type: application/json")
+    @PATCH("rest/v1/rulaf_komen?id=eq.{commentId}")
+    suspend fun updateCommentDiterima(
+        @Path("commentId") commentId: Int,
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Body body: CommentDiterimaUpdate
+    ): Response<Unit>
+
+    // Forum status update (tutup/buka) & jawapan_id
+    data class ForumStatusUpdate(
+        val status: String, // "buka" atau "tutup"
+        val jawapan_id: Int? = null
+    )
+
+    @Headers("Content-Type: application/json")
+    @PATCH("rest/v1/rulaf_forum?id=eq.{forumId}")
+    suspend fun updateForumStatus(
+        @Path("forumId") forumId: Int,
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Body body: ForumStatusUpdate
+    ): Response<Unit>
+
+    // Comment diterima update
+    data class CommentDiterimaUpdate(
+        val diterima: Boolean
+    )
+
+    @Headers("Content-Type: application/json")
+    @PATCH("rest/v1/rulaf_komen?id=eq.{commentId}")
+    suspend fun updateCommentDiterima(
+        @Path("commentId") commentId: Int,
+        @Header("apikey") apiKey: String = SUPABASE_ANON_KEY,
+        @Header("Authorization") auth: String = "Bearer $SUPABASE_ANON_KEY",
+        @Body body: CommentDiterimaUpdate
     ): Response<Unit>
 
     // Leaderboard RPG - Individual entries (existing)
